@@ -572,8 +572,8 @@ const product = products.find(
       await supabase
         .from("products")
         .update({
-         stock_quantity:
-  product.stock_quantity - quantity,
+  stock_quantity:
+  product.stock_quantity - saleForm.quantity,
         })
         .eq("id", product.id);
     }
