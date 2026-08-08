@@ -587,9 +587,6 @@ const product = products.find(
     setSaving(false);
   }
 
-「
- 
-
   const selectedSales = sales.filter(
     (sale) =>
       sale.product_id === historyProductId
