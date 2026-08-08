@@ -587,8 +587,9 @@ const product = products.find(
     setSaving(false);
   }
 
-  const selectedHistoryProduct =
-    productMap[historyProductId];
+  const selectedHistoryProduct = products.find(
+  (p) => p.id === historyProductId
+);
 
   const selectedPurchases = purchases.filter(
     (purchase) =>
