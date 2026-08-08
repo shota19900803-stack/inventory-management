@@ -573,7 +573,7 @@ const product = products.find(
         .from("products")
         .update({
   stock_quantity:
-  product.stock_quantity - saleForm.quantity,
+  product.stock_quantity - Number(saleForm.quantity),
         })
         .eq("id", product.id);
     }
