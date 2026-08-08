@@ -550,10 +550,7 @@ export default function Dashboard() {
 
     const totalSales = unitPrice * quantity;
     const totalCost = unitCost * quantity;
-    const grossProfit =
-      totalSales - totalCost;
-
-    const result = await supabase
+    
       .from("sales_history")
       .insert({
         product_id: saleForm.product_id,
@@ -570,9 +567,7 @@ export default function Dashboard() {
         gross_profit: grossProfit,
         notes:
           saleForm.notes.trim() || null,
-      });
-
-    if (result.error) {
+      
       setMessage(
         `売上登録エラー: ${result.error.message}`
       );
