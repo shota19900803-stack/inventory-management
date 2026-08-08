@@ -588,10 +588,7 @@ const product = products.find(
   }
 
 「
-  const selectedPurchases = purchases.filter(
-    (purchase) =>
-      purchase.product_id === historyProductId
-  );
+ 
 
   const selectedSales = sales.filter(
     (sale) =>
