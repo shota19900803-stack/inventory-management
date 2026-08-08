@@ -96,7 +96,7 @@ function monthOf(date: string) {
 }
 
 export default function Dashboard() {
-  const supabase = supabaseBrowser();
+  const supabase = supabaseBrowser;
 
   const [tab, setTab] = useState<Tab>("dashboard");
 
