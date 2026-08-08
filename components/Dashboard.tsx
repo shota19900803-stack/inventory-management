@@ -586,7 +586,7 @@ const product = products.find(
 
     setSaving(false);
   }
-・＋
+
 「
   const selectedPurchases = purchases.filter(
     (purchase) =>
