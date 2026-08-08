@@ -124,7 +124,25 @@ export default function Dashboard() {
     useState(initialSaleForm);
 
   const [selectedMonth, setSelectedMonth] =
-    useState(today.slice(0, 7));
+  useState(today.slice(0, 7));
+
+const months = useMemo(() => {
+  const set = new Set<string>();
+
+  sales.forEach((sale) =>
+    set.add(monthOf(sale.sale_date))
+  );
+
+  purchases.forEach((purchase) =>
+    set.add(monthOf(purchase.purchase_date))
+  );
+
+  set.add(today.slice(0, 7));
+
+  return Array.from(set).sort().reverse();
+}, [sales, purchases]);
+
+
 
   async function loadAll() {
     setLoading(true);
