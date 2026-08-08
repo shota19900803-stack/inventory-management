@@ -511,7 +511,7 @@ const months = useMemo(() => {
     setSaving(false);
   }
 
-  async function saveSale(
+   async function saveSale(
     event: React.FormEvent
   ) {
     event.preventDefault();
@@ -565,35 +565,58 @@ const months = useMemo(() => {
 
     setSaving(true);
     setMessage("");
-const result = await supabase
-  .from("sales_history")
-  .insert({
-    product_id: saleForm.product_id,
-    sale_date: saleForm.sale_date,
-    sales_channel: saleForm.sales_channel.trim() || null,
-    order_number: saleForm.order_number.trim() || null,
-    unit_price: unitPrice,
-    unit_cost: unitCost,
-    quantity,
-    notes: saleForm.notes.trim() || null,
-  });
+
+    const totalSales = unitPrice * quantity;
+    const totalCost = unitCost * quantity;
+    const grossProfit =
+      totalSales - totalCost;
+
+    const result = await supabase
+      .from("sales_history")
+      .insert({
+        product_id: saleForm.product_id,
+        sale_date: saleForm.sale_date,
+        sales_channel:
+          saleForm.sales_channel.trim() || null,
+        order_number:
+          saleForm.order_number.trim() || null,
+        unit_price: unitPrice,
+        unit_cost: unitCost,
+        quantity,
+        total_sales: totalSales,
+        total_cost: totalCost,
+        gross_profit: grossProfit,
+        notes:
+          saleForm.notes.trim() || null,
+      });
+
+    if (result.error) {
       setMessage(
         `売上登録エラー: ${result.error.message}`
       );
       setSaving(false);
       return;
     }
-const product = products.find(
-  (p) => p.id === saleForm.product_id
-);
+
     if (product) {
-      await supabase
+      const newStock =
+        Number(product.stock_quantity || 0) -
+        quantity;
+
+      const stockResult = await supabase
         .from("products")
         .update({
-  stock_quantity:
-  product.stock_quantity - Number(saleForm.quantity),
+          stock_quantity: newStock,
         })
         .eq("id", product.id);
+
+      if (stockResult.error) {
+        setMessage(
+          `在庫更新エラー: ${stockResult.error.message}`
+        );
+        setSaving(false);
+        return;
+      }
     }
 
     setMessage("売上を登録しました。");
