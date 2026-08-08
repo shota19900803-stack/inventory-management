@@ -547,25 +547,18 @@ export default function Dashboard() {
 
     setSaving(true);
     setMessage("");
-
-    
-    
-      .from("sales_history")
-      .insert({
-        product_id: saleForm.product_id,
-        sale_date: saleForm.sale_date,
-        sales_channel:
-          saleForm.sales_channel.trim() || null,
-        order_number:
-          saleForm.order_number.trim() || null,
-        unit_price: unitPrice,
-        unit_cost: unitCost,
-        quantity,
-        
-        
-        notes:
-  saleForm.notes.trim() || null,
-      
+const result = await supabase
+  .from("sales_history")
+  .insert({
+    product_id: saleForm.product_id,
+    sale_date: saleForm.sale_date,
+    sales_channel: saleForm.sales_channel.trim() || null,
+    order_number: saleForm.order_number.trim() || null,
+    unit_price: unitPrice,
+    unit_cost: unitCost,
+    quantity,
+    notes: saleForm.notes.trim() || null,
+  });
       setMessage(
         `売上登録エラー: ${result.error.message}`
       );
