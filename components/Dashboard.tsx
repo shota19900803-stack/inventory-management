@@ -586,11 +586,8 @@ const product = products.find(
 
     setSaving(false);
   }
-
-  const selectedHistoryProduct = products.find(
-  (p) => p.id === historyProductId
-);
-
+・＋
+「
   const selectedPurchases = purchases.filter(
     (purchase) =>
       purchase.product_id === historyProductId
