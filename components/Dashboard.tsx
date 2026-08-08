@@ -565,7 +565,9 @@ const result = await supabase
       setSaving(false);
       return;
     }
-
+const product = products.find(
+  (p) => p.id === saleForm.product_id
+);
     if (product) {
       await supabase
         .from("products")
