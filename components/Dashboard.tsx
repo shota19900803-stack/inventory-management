@@ -548,8 +548,7 @@ export default function Dashboard() {
     setSaving(true);
     setMessage("");
 
-    const totalSales = unitPrice * quantity;
-    const totalCost = unitCost * quantity;
+    
     
       .from("sales_history")
       .insert({
@@ -562,11 +561,10 @@ export default function Dashboard() {
         unit_price: unitPrice,
         unit_cost: unitCost,
         quantity,
-        total_sales: totalSales,
-        total_cost: totalCost,
-        gross_profit: grossProfit,
+        
+        
         notes:
-          saleForm.notes.trim() || null,
+  saleForm.notes.trim() || null,
       
       setMessage(
         `売上登録エラー: ${result.error.message}`
