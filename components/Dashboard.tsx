@@ -1485,10 +1485,10 @@ const months = useMemo(() => {
 
                 <h3>仕入履歴</h3>
 
-                {selectedPurchases.length ===
-                0 ? (
-                  <p>仕入履歴はありません。</p>
-                ) : (
+                {purchases.length ===
+0 ? (
+  <p>仕入履歴はありません。</p>
+) : (
                   <div
                     style={{
                       overflowX: "auto",
@@ -1522,8 +1522,8 @@ const months = useMemo(() => {
                       </thead>
 
                       <tbody>
-                        {selectedPurchases.map(
-                          (purchase) => (
+                       {purchases.map(
+  (purchase) => (
                             <tr
                               key={
                                 purchase.id
