@@ -1466,10 +1466,12 @@ const months = useMemo(() => {
                     alignItems: "center",
                   }}
                 >
-                  <h2>
-                    {selectedHistoryProduct?.name ??
-                      "商品"}{" "}
-                    の履歴
+                  
+                    <h2>
+  {products.find(
+    (product) => product.id === historyProductId
+  )?.name ?? "商品"} の履歴
+
                   </h2>
 
                   <button
