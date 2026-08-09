@@ -640,7 +640,108 @@ if (transactionResult.error) {
 
     setSaving(false);
   }
+  async function cancelSale(sale: any) {
+    const proceed = window.confirm(
+      `この売上を取消しますか？\n\n売上金額：¥${yen(sale.total_sales)}\n数量：${sale.quantity}個`
+    );
 
+    if (!proceed) {
+      return;
+    }
+
+    setSaving(true);
+    setMessage("");
+
+    try {
+      // すでに取消済みなら処理しない
+      if (sale.is_cancelled) {
+        setMessage("この売上はすでに取消済みです。");
+        setSaving(false);
+        return;
+      }
+
+      // 商品を取得
+      const product = products.find(
+        (item) => item.id === sale.product_id
+      );
+
+      if (!product) {
+        setMessage("商品が見つかりません。");
+        setSaving(false);
+        return;
+      }
+
+      const currentStock = Number(product.stock_quantity || 0);
+      const quantity = Number(sale.quantity || 0);
+      const newStock = currentStock + quantity;
+
+      // 在庫を元に戻す
+      const stockResult = await supabase
+        .from("products")
+        .update({
+          stock_quantity: newStock,
+        })
+        .eq("id", sale.product_id);
+
+      if (stockResult.error) {
+        setMessage(
+          `在庫復元エラー：${stockResult.error.message}`
+        );
+        setSaving(false);
+        return;
+      }
+
+      // 売上を取消済みにする
+      const salesResult = await supabase
+        .from("sales_history")
+        .update({
+          is_cancelled: true,
+        })
+        .eq("id", sale.id);
+
+      if (salesResult.error) {
+        setMessage(
+          `売上取消エラー：${salesResult.error.message}`
+        );
+        setSaving(false);
+        return;
+      }
+
+      // 在庫履歴に取消を記録
+      const transactionResult = await supabase
+        .from("inventory_transactions")
+        .insert({
+          product_id: sale.product_id,
+          transaction_type: "sale",
+          quantity: quantity,
+          stock_before: currentStock,
+          stock_after: newStock,
+          reason: "売上取消",
+          reference_number: sale.order_number || null,
+        });
+
+      if (transactionResult.error) {
+        setMessage(
+          `在庫履歴登録エラー：${transactionResult.error.message}`
+        );
+        setSaving(false);
+        return;
+      }
+
+      setMessage("売上を取消しました。在庫も元に戻しました。");
+
+      await loadAll();
+
+      setSaving(false);
+    } catch (error) {
+      setMessage(
+        `売上取消エラー：${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+      setSaving(false);
+    }
+  }
   
 
   
@@ -1011,11 +1112,16 @@ if (transactionResult.error) {
                           販売先
                         </th>
                         <th style={{ textAlign: "right", padding: 10 }}>
-                          売上
-                        </th>
-                        <th style={{ textAlign: "right", padding: 10 }}>
-                          粗利
-                        </th>
+  売上
+</th>
+
+<th style={{ textAlign: "right", padding: 10 }}>
+  粗利
+</th>
+
+<th style={{ textAlign: "center", padding: 10 }}>
+  操作
+</th>
                       </tr>
                     </thead>
 
@@ -1053,6 +1159,39 @@ if (transactionResult.error) {
                           >
                             {yen(sale.gross_profit)}
                           </td>
+                          <td
+  style={{
+    padding: 10,
+    textAlign: "center",
+  }}
+>
+  {sale.is_cancelled ? (
+    <span
+      style={{
+        color: "#b42318",
+        fontWeight: 700,
+      }}
+    >
+      取消済み
+    </span>
+  ) : (
+    <button
+      type="button"
+      onClick={() => cancelSale(sale)}
+      style={{
+        padding: "6px 12px",
+        borderRadius: 8,
+        border: "1px solid #f0b4b4",
+        background: "#fff5f5",
+        color: "#b42318",
+        fontWeight: 700,
+        cursor: "pointer",
+      }}
+    >
+      取消
+    </button>
+  )}
+</td>
                         </tr>
                       ))}
                     </tbody>
