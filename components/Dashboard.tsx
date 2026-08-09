@@ -611,7 +611,6 @@ const result = await supabase
         setSaving(false);
         return;
       }
-    }
 const transactionResult = await supabase
   .from("inventory_transactions")
   .insert({
@@ -630,7 +629,9 @@ if (transactionResult.error) {
   );
   setSaving(false);
   return;
-}
+    }
+  }
+
     setMessage("売上を登録しました。");
 
     setSaleForm(initialSaleForm);
