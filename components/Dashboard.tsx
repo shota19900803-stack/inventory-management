@@ -461,22 +461,18 @@ const months = useMemo(() => {
     setSaving(true);
     setMessage("");
 
-    const totalCost = unitCost * quantity;
-
-    const result = await supabase
-      .from("purchase_history")
-      .insert({
-        product_id: purchaseForm.product_id,
-        purchase_date: purchaseForm.purchase_date,
-        supplier:
-          purchaseForm.supplier.trim() || null,
-        unit_cost: unitCost,
-        quantity,
-        total_cost: totalCost,
-        notes:
-          purchaseForm.notes.trim() || null,
-      });
-
+const result = await supabase
+  .from("purchase_history")
+  .insert({
+    product_id: purchaseForm.product_id,
+    purchase_date: purchaseForm.purchase_date,
+    supplier:
+      purchaseForm.supplier.trim() || null,
+    unit_cost: unitCost,
+    quantity,
+    notes:
+      purchaseForm.notes.trim() || null,
+  });
     if (result.error) {
       setMessage(
         `仕入登録エラー: ${result.error.message}`
