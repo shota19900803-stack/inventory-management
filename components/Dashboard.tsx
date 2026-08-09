@@ -621,13 +621,12 @@ const transactionResult = await supabase
     stock_before: currentStock,
     stock_after: newStock,
     reason: "売上登録",
-    reference_number:
-      saleForm.order_number.trim() || null,
+    reference_number: saleForm.order_number.trim() || null,
   });
 
 if (transactionResult.error) {
   setMessage(
-    `在庫履歴登録エラー：${transactionResult.error.message}`
+    `在庫履歴登録エラー: ${transactionResult.error.message}`
   );
   setSaving(false);
   return;
