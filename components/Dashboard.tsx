@@ -1569,7 +1569,7 @@ const months = useMemo(() => {
                   売上履歴
                 </h3>
 
-                {selectedSales.length === 0 ? (
+               {sales.length === 0 ? (
                   <p>売上履歴はありません。</p>
                 ) : (
                   <div
@@ -1608,7 +1608,7 @@ const months = useMemo(() => {
                       </thead>
 
                       <tbody>
-                        {selectedSales.map(
+                       {sales.map(
                           (sale) => (
                             <tr key={sale.id}>
                               <td style={{ padding: 8 }}>
