@@ -604,13 +604,14 @@ const result = await supabase
         })
         .eq("id", product.id);
 
-      if (stockResult.error) {
-        setMessage(
-          `在庫更新エラー: ${stockResult.error.message}`
-        );
-        setSaving(false);
-        return;
-      }
+     if (stockResult.error) {
+  setMessage(
+    `在庫更新エラー: ${stockResult.error.message}`
+  );
+  setSaving(false);
+  return;
+}
+
 const transactionResult = await supabase
   .from("inventory_transactions")
   .insert({
@@ -629,9 +630,8 @@ if (transactionResult.error) {
   );
   setSaving(false);
   return;
-    }
-  }
-
+}
+}
     setMessage("売上を登録しました。");
 
     setSaleForm(initialSaleForm);
