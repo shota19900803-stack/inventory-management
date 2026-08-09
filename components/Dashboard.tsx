@@ -612,7 +612,26 @@ const result = await supabase
         return;
       }
     }
+const transactionResult = await supabase
+  .from("inventory_transactions")
+  .insert({
+    product_id: product.id,
+    transaction_type: "sale",
+    quantity: quantity,
+    stock_before: currentStock,
+    stock_after: newStock,
+    reason: "売上登録",
+    reference_number:
+      saleForm.order_number.trim() || null,
+  });
 
+if (transactionResult.error) {
+  setMessage(
+    `在庫履歴登録エラー：${transactionResult.error.message}`
+  );
+  setSaving(false);
+  return;
+}
     setMessage("売上を登録しました。");
 
     setSaleForm(initialSaleForm);
