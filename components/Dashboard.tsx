@@ -583,9 +583,7 @@ const months = useMemo(() => {
         unit_price: unitPrice,
         unit_cost: unitCost,
         quantity,
-        total_sales: totalSales,
-        total_cost: totalCost,
-        gross_profit: grossProfit,
+        
         notes:
           saleForm.notes.trim() || null,
       });
