@@ -43,8 +43,9 @@ type Sale = {
   total_cost: number;
   gross_profit: number;
   notes?: string | null;
+  is_cancelled: boolean;
   created_at?: string;
-};
+}
 
 type Tab =
   | "dashboard"
