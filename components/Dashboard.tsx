@@ -599,139 +599,92 @@ const result = await supabase
     setSaving(false);
   }
 
-   async function saveSale(
-    event: React.FormEvent
+async function saveSale(
+  event: React.FormEvent
+) {
+  event.preventDefault();
+
+  if (!saleForm.product_id) {
+    setMessage("商品を選択してください。");
+    return;
+  }
+
+  const unitPrice = Number(
+    saleForm.unit_price || 0
+  );
+
+  const unitCost = Number(
+    saleForm.unit_cost || 0
+  );
+
+  const quantity = Number(
+    saleForm.quantity || 0
+  );
+
+  if (
+    unitPrice < 0 ||
+    unitCost < 0 ||
+    quantity <= 0
   ) {
-    event.preventDefault();
-
-    if (!saleForm.product_id) {
-      setMessage("商品を選択してください。");
-      return;
-    }
-
-    const unitPrice = Number(
-      saleForm.unit_price || 0
+    setMessage(
+      "販売価格・原価・数量を正しく入力してください。"
     );
+    return;
+  }
 
-    const unitCost = Number(
-      saleForm.unit_cost || 0
-    );
+  setSaving(true);
+  setMessage("");
 
-    const quantity = Number(
-      saleForm.quantity || 0
-    );
-
-    if (
-      unitPrice < 0 ||
-      unitCost < 0 ||
-      quantity <= 0
-    ) {
-      setMessage(
-        "販売価格・原価・数量を正しく入力してください。"
-      );
-      return;
-    }
-
-    const product = products.find(
-      (item) =>
-        item.id === saleForm.product_id
-    );
-
-    const currentStock = Number(
-      product?.stock_quantity || 0
-    );
-
-    if (quantity > currentStock) {
-      const proceed = window.confirm(
-        `現在の在庫は ${currentStock} 個です。\n${quantity} 個販売として登録しますか？`
-      );
-
-      if (!proceed) {
-        return;
-      }
-    }
-
-    setSaving(true);
-    setMessage("");
-
-    const totalSales = unitPrice * quantity;
-    const totalCost = unitCost * quantity;
-    const grossProfit =
-      totalSales - totalCost;
-
-    const result = await supabase
-      .from("sales_history")
-      .insert({
-        product_id: saleForm.product_id,
-        sale_date: saleForm.sale_date,
-        sales_channel:
+  try {
+    const { data, error } = await supabase.rpc(
+      "register_sale",
+      {
+        p_product_id: saleForm.product_id,
+        p_sale_date: saleForm.sale_date,
+        p_sales_channel:
           saleForm.sales_channel.trim() || null,
-        order_number:
+        p_order_number:
           saleForm.order_number.trim() || null,
-        unit_price: unitPrice,
-        unit_cost: unitCost,
-        quantity,
-      is_cancelled: false,
-        notes:
+        p_unit_price: unitPrice,
+        p_unit_cost: unitCost,
+        p_quantity: quantity,
+        p_notes:
           saleForm.notes.trim() || null,
-      });
+      }
+    );
 
-    if (result.error) {
+    if (error) {
       setMessage(
-        `売上登録エラー: ${result.error.message}`
+        `売上登録エラー：${error.message}`
       );
-      setSaving(false);
       return;
     }
 
-    if (product) {
-      const newStock =
-        Number(product.stock_quantity || 0) -
-        quantity;
+    if (!data?.success) {
+      setMessage(
+        "売上登録に失敗しました。"
+      );
+      return;
+    }
 
-      const stockResult = await supabase
-        .from("products")
-        .update({
-          stock_quantity: newStock,
-        })
-        .eq("id", product.id);
-
-     if (stockResult.error) {
-  setMessage(
-    `在庫更新エラー: ${stockResult.error.message}`
-  );
-  setSaving(false);
-  return;
-}
-
-const transactionResult = await supabase
-  .from("inventory_transactions")
-  .insert({
-    product_id: product.id,
-    transaction_type: "sale",
-    quantity: quantity,
-    stock_before: currentStock,
-    stock_after: newStock,
-    reason: "売上登録",
-    reference_number: saleForm.order_number.trim() || null,
-  });
-
-if (transactionResult.error) {
-  setMessage(
-    `在庫履歴登録エラー: ${transactionResult.error.message}`
-  );
-  setSaving(false);
-  return;
-}
-}
-    setMessage("売上を登録しました。");
+    setMessage(
+      "売上を登録しました。"
+    );
 
     setSaleForm(initialSaleForm);
 
     await loadAll();
 
+  } catch (error: any) {
+    setMessage(
+      `売上登録エラー：${
+        error?.message || "予期しないエラーが発生しました。"
+      }`
+    );
+  } finally {
     setSaving(false);
   }
+}
   async function cancelSale(sale: any) {
     const proceed = window.confirm(
       `この売上を取消しますか？\n\n売上金額：¥${yen(sale.total_sales)}\n数量：${sale.quantity}個`
