@@ -265,7 +265,28 @@ const months = useMemo(() => {
     (sum, purchase) => sum + Number(purchase.total_cost || 0),
     0
   );
+const previousMonth = (() => {
+  const date = new Date(`${selectedMonth}-01`);
+  date.setMonth(date.getMonth() - 1);
+  return date.toISOString().slice(0, 7);
+})();
 
+const previousMonthSales = sales.filter(
+  (sale) => monthOf(sale.sale_date) === previousMonth
+);
+
+const previousMonthlySalesTotal = previousMonthSales.reduce(
+  (sum, sale) => sum + Number(sale.total_sales || 0),
+  0
+);
+
+const salesMonthDiff =
+  monthlySalesTotal - previousMonthlySalesTotal;
+
+const salesMonthDiffRate =
+  previousMonthlySalesTotal > 0
+    ? (salesMonthDiff / previousMonthlySalesTotal) * 100
+    : null;
   const grossMargin =
     monthlySalesTotal > 0
       ? (monthlyGrossProfit / monthlySalesTotal) * 100
