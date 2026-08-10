@@ -300,6 +300,13 @@ const purchaseMonthDiffRate =
   previousMonthlyPurchaseTotal > 0
     ? (purchaseMonthDiff / previousMonthlyPurchaseTotal) * 100
     : null;
+  const costMonthDiff =
+  monthlyCostTotal - previousMonthlyCostTotal;
+
+const costMonthDiffRate =
+  previousMonthlyCostTotal > 0
+    ? (costMonthDiff / previousMonthlyCostTotal) * 100
+    : null;
 const salesMonthDiff =
   monthlySalesTotal - previousMonthlySalesTotal;
 
