@@ -314,6 +314,48 @@ const salesMonthDiffRate =
   previousMonthlySalesTotal > 0
     ? (salesMonthDiff / previousMonthlySalesTotal) * 100
     : null;
+  const monthlyTrendData = Array.from({ length: 6 }, (_, index) => {
+  const date = new Date(`${selectedMonth}-01`);
+  date.setMonth(date.getMonth() - (5 - index));
+
+  const month = date.toISOString().slice(0, 7);
+
+  const monthSalesData = sales.filter(
+    (sale) => monthOf(sale.sale_date) === month
+  );
+
+  const monthPurchasesData = purchases.filter(
+    (purchase) => monthOf(purchase.purchase_date) === month
+  );
+
+  const salesTotal = monthSalesData.reduce(
+    (sum, sale) => sum + Number(sale.total_sales || 0),
+    0
+  );
+
+  const purchaseTotal = monthPurchasesData.reduce(
+    (sum, purchase) => sum + Number(purchase.total_cost || 0),
+    0
+  );
+
+  const costTotal = monthSalesData.reduce(
+    (sum, sale) => sum + Number(sale.total_cost || 0),
+    0
+  );
+
+  const grossProfit = monthSalesData.reduce(
+    (sum, sale) => sum + Number(sale.gross_profit || 0),
+    0
+  );
+
+  return {
+    month,
+    sales: salesTotal,
+    purchases: purchaseTotal,
+    cost: costTotal,
+    grossProfit,
+  };
+});
   const grossMargin =
     monthlySalesTotal > 0
       ? (monthlyGrossProfit / monthlySalesTotal) * 100
