@@ -166,10 +166,11 @@ const months = useMemo(() => {
         .limit(2000),
 
       supabase
-        .from("sales_history")
-        .select("*")
-        .order("sale_date", { ascending: false })
-        .limit(2000),
+  .from("sales_history")
+  .select("*")
+  .eq("is_cancelled", false)
+  .order("sale_date", { ascending: false })
+  .limit(2000)
     ]);
 
     if (productsResult.error) {
