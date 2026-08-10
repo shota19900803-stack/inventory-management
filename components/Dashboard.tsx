@@ -581,7 +581,7 @@ const result = await supabase
         unit_price: unitPrice,
         unit_cost: unitCost,
         quantity,
-      
+      is_cancelled: false,
         notes:
           saleForm.notes.trim() || null,
       });
@@ -695,11 +695,13 @@ if (transactionResult.error) {
 
       // 売上を取消済みにする
       const salesResult = await supabase
-        .from("sales_history")
-        .update({
-          is_cancelled: true,
-        })
-        .eq("id", sale.id);
+  .from("sales_history")
+  .update({
+    is_cancelled: true,
+  })
+  .eq("id", sale.id)
+  .select("id, is_cancelled")
+  .single();
 
       if (salesResult.error) {
         setMessage(
