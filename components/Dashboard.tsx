@@ -279,6 +279,10 @@ const previousMonthlySalesTotal = previousMonthSales.reduce(
   (sum, sale) => sum + Number(sale.total_sales || 0),
   0
 );
+  const previousMonthlyCostTotal = previousMonthSales.reduce(
+  (sum, sale) => sum + Number(sale.total_cost || 0),
+  0
+);
 const previousMonthPurchases = purchases.filter(
   (purchase) =>
     monthOf(purchase.purchase_date) === previousMonth
