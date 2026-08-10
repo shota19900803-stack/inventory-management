@@ -279,7 +279,23 @@ const previousMonthlySalesTotal = previousMonthSales.reduce(
   (sum, sale) => sum + Number(sale.total_sales || 0),
   0
 );
+const previousMonthPurchases = purchases.filter(
+  (purchase) =>
+    monthOf(purchase.purchase_date) === previousMonth
+);
 
+const previousMonthlyPurchaseTotal = previousMonthPurchases.reduce(
+  (sum, purchase) => sum + Number(purchase.total_cost || 0),
+  0
+);
+
+const purchaseMonthDiff =
+  monthlyPurchaseTotal - previousMonthlyPurchaseTotal;
+
+const purchaseMonthDiffRate =
+  previousMonthlyPurchaseTotal > 0
+    ? (purchaseMonthDiff / previousMonthlyPurchaseTotal) * 100
+    : null;
 const salesMonthDiff =
   monthlySalesTotal - previousMonthlySalesTotal;
 
