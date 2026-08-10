@@ -1082,6 +1082,20 @@ if (transactionResult.error) {
                 >
                   {yen(monthlyPurchaseTotal)}
                 </strong>
+             <div
+  style={{
+    marginTop: 6,
+    fontSize: 14,
+    color: purchaseMonthDiff >= 0 ? "#dc2626" : "#15803d",
+    fontWeight: 600,
+  }}
+>
+  前月比 {purchaseMonthDiff >= 0 ? "+" : ""}
+  {yen(purchaseMonthDiff)}
+  {purchaseMonthDiffRate !== null
+    ? ` (${purchaseMonthDiffRate >= 0 ? "+" : ""}${purchaseMonthDiffRate.toFixed(1)}%)`
+    : ""}
+</div>
               </div>
 
               <div style={cardStyle}>
