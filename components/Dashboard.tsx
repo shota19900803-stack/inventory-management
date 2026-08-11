@@ -127,6 +127,13 @@ export default function Dashboard() {
   const [selectedMonth, setSelectedMonth] =
   useState(today.slice(0, 7));
 
+  const lowStockProducts = useMemo(
+  () =>
+    products.filter(
+      (product) => (product.stock_quantity ?? 0) <= 2
+    ),
+  [products]
+);
 const months = useMemo(() => {
   const set = new Set<string>();
 
@@ -1217,6 +1224,56 @@ async function saveSale(
                   粗利率 {grossMargin.toFixed(1)}%
                 </div>
               </div>
+              <div
+  style={{
+    ...cardStyle,
+    cursor: "pointer",
+  }}
+  onClick={() => setTab("products")}
+>
+  <div
+    style={{
+      color: lowStockProducts.length > 0 ? "#dc2626" : "#15803d",
+      fontSize: 14,
+      fontWeight: 600,
+    }}
+  >
+    在庫管理
+  </div>
+
+  <strong
+    style={{
+      fontSize: 28,
+      display: "block",
+      marginTop: 8,
+      color: lowStockProducts.length > 0 ? "#dc2626" : "#15803d",
+    }}
+  >
+    {lowStockProducts.length}件
+  </strong>
+
+  <div
+    style={{
+      marginTop: 6,
+      fontSize: 14,
+      fontWeight: 600,
+    }}
+  >
+    {lowStockProducts.length > 0
+      ? "⚠️ 在庫不足があります"
+      : "✓ 在庫は問題ありません"}
+  </div>
+
+  <div
+    style={{
+      marginTop: 8,
+      color: "#6b7280",
+      fontSize: 13,
+    }}
+  >
+    クリックして商品一覧を確認
+  </div>
+</div>
             </section>
 
             <section style={cardStyle}>
