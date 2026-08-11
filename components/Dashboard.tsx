@@ -634,6 +634,31 @@ async function saveSale(
   setMessage("");
 
   try {
+    // 商品を取得して、売上登録前の在庫数を確認
+    const product = products.find(
+      (item) => item.id === saleForm.product_id
+    );
+
+    if (!product) {
+      setMessage("商品が見つかりません。");
+      return;
+    }
+
+    const currentStock = Number(
+      product.stock_quantity || 0
+    );
+
+    const newStock = currentStock - quantity;
+
+    // 在庫不足チェック
+    if (newStock < 0) {
+      setMessage(
+        `在庫が不足しています。現在庫：${currentStock}個`
+      );
+      return;
+    }
+
+    // 売上登録
     const { data, error } = await supabase.rpc(
       "register_sale",
       {
@@ -665,6 +690,29 @@ async function saveSale(
       return;
     }
 
+    // ==========================================
+    // 在庫変動履歴に「売上」を記録
+    // ==========================================
+    const transactionResult = await supabase
+      .from("inventory_transactions")
+      .insert({
+        product_id: saleForm.product_id,
+        transaction_type: "sale",
+        quantity: quantity,
+        stock_before: currentStock,
+        stock_after: newStock,
+        reason: "売上",
+        reference_number:
+          saleForm.order_number.trim() || null,
+      });
+
+    if (transactionResult.error) {
+      setMessage(
+        `在庫履歴登録エラー：${transactionResult.error.message}`
+      );
+      return;
+    }
+
     setMessage(
       "売上を登録しました。"
     );
@@ -676,7 +724,8 @@ async function saveSale(
   } catch (error: any) {
     setMessage(
       `売上登録エラー：${
-        error?.message || "予期しないエラーが発生しました。"
+        error?.message ||
+        "予期しないエラーが発生しました。"
       }`
     );
   } finally {
