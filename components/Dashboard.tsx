@@ -127,13 +127,7 @@ export default function Dashboard() {
   const [selectedMonth, setSelectedMonth] =
   useState(today.slice(0, 7));
 
-  const lowStockProducts = useMemo(
-  () =>
-    products.filter(
-      (product) => (product.stock_quantity ?? 0) <= 2
-    ),
-  [products]
-);
+ 
 const months = useMemo(() => {
   const set = new Set<string>();
 
