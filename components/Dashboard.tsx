@@ -1267,6 +1267,82 @@ async function saveSale(
   >
     クリックして商品一覧を確認
   </div>
+                {lowStockProducts.length > 0 && (
+  <div
+    style={{
+      marginTop: 14,
+      paddingTop: 12,
+      borderTop: "1px solid #e5e7eb",
+    }}
+  >
+    <div
+      style={{
+        fontSize: 13,
+        fontWeight: 700,
+        color: "#dc2626",
+        marginBottom: 8,
+      }}
+    >
+      ⚠️ 在庫不足商品
+    </div>
+
+    {lowStockProducts.slice(0, 5).map((product) => {
+      const stock = product.stock_quantity ?? 0;
+
+      return (
+        <div
+          key={product.id}
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            padding: "7px 0",
+            borderBottom: "1px solid #f1f5f9",
+            gap: 10,
+          }}
+        >
+          <div
+            style={{
+              fontSize: 13,
+              fontWeight: 600,
+              flex: 1,
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {product.name}
+          </div>
+
+          <div
+            style={{
+              fontSize: 12,
+              fontWeight: 700,
+              color: stock === 0 ? "#dc2626" : "#d97706",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {stock === 0 ? "欠品" : `残り ${stock}個`}
+          </div>
+        </div>
+      );
+    })}
+
+    {lowStockProducts.length > 5 && (
+      <div
+        style={{
+          marginTop: 8,
+          fontSize: 12,
+          color: "#6b7280",
+          textAlign: "right",
+        }}
+      >
+        他 {lowStockProducts.length - 5}件
+      </div>
+    )}
+  </div>
+)}
 </div>
             </section>
 
