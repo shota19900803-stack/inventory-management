@@ -1709,12 +1709,13 @@ async function saveSale(
                               </button>
 
                               <button
-                                onClick={() =>
-                                  setHistoryProductId(
-                                    product.id
-                                  )
-                                }
-                              >
+  type="button"
+  onClick={() =>
+    setHistoryProductId(
+      product.id
+    )
+  }
+>
                                 履歴
                               </button>
 
