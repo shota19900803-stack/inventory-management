@@ -526,68 +526,58 @@ const salesMonthDiffRate =
   }
 
   async function savePurchase(
-    event: React.FormEvent
-  ) {
-    event.preventDefault();
+  event: React.FormEvent
+) {
+  event.preventDefault();
 
-    if (!purchaseForm.product_id) {
-      setMessage("商品を選択してください。");
-      return;
-    }
+  if (!purchaseForm.product_id) {
+    setMessage("商品を選択してください。");
+    return;
+  }
 
-    const unitCost = Number(
-      purchaseForm.unit_cost || 0
+  const unitCost = Number(
+    purchaseForm.unit_cost || 0
+  );
+
+  const quantity = Number(
+    purchaseForm.quantity || 0
+  );
+
+  if (unitCost < 0 || quantity <= 0) {
+    setMessage(
+      "仕入単価と数量を正しく入力してください。"
+    );
+    return;
+  }
+
+  setSaving(true);
+  setMessage("");
+
+  try {
+    const { data, error } = await supabase.rpc(
+      "register_purchase",
+      {
+        p_product_id: purchaseForm.product_id,
+        p_purchase_date: purchaseForm.purchase_date,
+        p_supplier:
+          purchaseForm.supplier.trim() || null,
+        p_unit_cost: unitCost,
+        p_quantity: quantity,
+        p_notes:
+          purchaseForm.notes.trim() || null,
+      }
     );
 
-    const quantity = Number(
-      purchaseForm.quantity || 0
-    );
-
-    if (unitCost < 0 || quantity <= 0) {
+    if (error) {
       setMessage(
-        "仕入単価と数量を正しく入力してください。"
+        `仕入登録エラー：${error.message}`
       );
       return;
     }
 
-    setSaving(true);
-    setMessage("");
-
-const result = await supabase
-  .from("purchase_history")
-  .insert({
-    product_id: purchaseForm.product_id,
-    purchase_date: purchaseForm.purchase_date,
-    supplier:
-      purchaseForm.supplier.trim() || null,
-    unit_cost: unitCost,
-    quantity,
-    notes:
-      purchaseForm.notes.trim() || null,
-  });
-    if (result.error) {
-      setMessage(
-        `仕入登録エラー: ${result.error.message}`
-      );
-      setSaving(false);
+    if (!data?.success) {
+      setMessage("仕入登録に失敗しました。");
       return;
-    }
-
-    const product = products.find(
-      (item) =>
-        item.id === purchaseForm.product_id
-    );
-
-    if (product) {
-      await supabase
-        .from("products")
-        .update({
-          stock_quantity:
-            Number(product.stock_quantity || 0) +
-            quantity,
-          cost_price: unitCost,
-        })
-        .eq("id", product.id);
     }
 
     setMessage("仕入を登録しました。");
@@ -596,9 +586,17 @@ const result = await supabase
 
     await loadAll();
 
+  } catch (error: any) {
+    setMessage(
+      `仕入登録エラー：${
+        error?.message ||
+        "予期しないエラーが発生しました。"
+      }`
+    );
+  } finally {
     setSaving(false);
   }
-
+}
 async function saveSale(
   event: React.FormEvent
 ) {
