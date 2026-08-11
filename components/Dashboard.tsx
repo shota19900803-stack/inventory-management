@@ -1246,27 +1246,58 @@ async function saveSale(
     {lowStockProducts.length}件
   </strong>
 
-  <div
-    style={{
-      marginTop: 6,
-      fontSize: 14,
-      fontWeight: 600,
-    }}
-  >
-    {lowStockProducts.length > 0
-      ? "⚠️ 在庫不足があります"
-      : "✓ 在庫は問題ありません"}
-  </div>
+<div
+  style={{
+    marginTop: 6,
+    fontSize: 14,
+    fontWeight: 600,
+    color: lowStockProducts.length > 0 ? "#dc2626" : "#15803d",
+  }}
+>
+  {lowStockProducts.length > 0
+    ? "⚠️ 在庫不足商品"
+    : "✓ 在庫は問題ありません"}
+</div>
 
-  <div
-    style={{
-      marginTop: 8,
-      color: "#6b7280",
-      fontSize: 13,
-    }}
-  >
-    クリックして商品一覧を確認
+{lowStockProducts.length > 0 && (
+  <div style={{ marginTop: 8 }}>
+    {lowStockProducts.map((product) => (
+      <div
+        key={product.id}
+        style={{
+          padding: "10px 0",
+          borderTop: "1px solid #e5e7eb",
+          cursor: "pointer",
+        }}
+        onClick={(e) => {
+          e.stopPropagation();
+          openPurchase(product.id);
+        }}
+      >
+        <div
+          style={{
+            fontSize: 14,
+            fontWeight: 600,
+            color: "#111827",
+          }}
+        >
+          {product.name || "商品名未設定"}
+        </div>
+
+        <div
+          style={{
+            marginTop: 3,
+            fontSize: 12,
+            color: "#dc2626",
+          }}
+        >
+          在庫 {Number(product.stock_quantity || 0)}個
+          {"　→ 仕入登録"}
+        </div>
+      </div>
+    ))}
   </div>
+)}
                 {lowStockProducts.length > 0 && (
   <div
     style={{
