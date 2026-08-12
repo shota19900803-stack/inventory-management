@@ -1529,21 +1529,120 @@ async function saveSale(
                     />
                   </label>
 
-                  <label>
-                    JANコード
-                    <input
-                      style={inputStyle}
-                      inputMode="numeric"
-                      value={productForm.jan_code}
-                      onChange={(e) =>
-                        setProductForm({
-                          ...productForm,
-                          jan_code: e.target.value,
-                        })
-                      }
-                    />
-                  </label>
+                 <label>
+  JANコード
+  <div
+    style={{
+      display: "flex",
+      gap: 8,
+      alignItems: "center",
+    }}
+  >
+    <input
+      style={{
+        ...inputStyle,
+        flex: 1,
+      }}
+      inputMode="numeric"
+      value={productForm.jan_code}
+      onChange={(e) =>
+        setProductForm({
+          ...productForm,
+          jan_code: e.target.value,
+        })
+      }
+      placeholder="JANコードを入力"
+    />
 
+    <label
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "12px 16px",
+        background: "#15803d",
+        color: "#fff",
+        borderRadius: 10,
+        fontWeight: 700,
+        cursor: "pointer",
+        whiteSpace: "nowrap",
+      }}
+    >
+      📷 JAN読取
+      <input
+        type="file"
+        accept="image/*"
+        capture="environment"
+        style={{ display: "none" }}
+        onChange={async (e) => {
+          const file = e.target.files?.[0];
+
+          if (!file) return;
+
+          try {
+            // iPhoneなどの対応ブラウザでバーコードを読み取る
+            if (!("BarcodeDetector" in window)) {
+              alert(
+                "このブラウザはバーコード自動読み取りに対応していません。\nJANコードを手入力してください。"
+              );
+              return;
+            }
+
+            const BarcodeDetectorClass = (
+              window as typeof window & {
+                BarcodeDetector: new (options?: {
+                  formats?: string[];
+                }) => {
+                  detect(
+                    image: ImageBitmap
+                  ): Promise<Array<{ rawValue?: string }>>;
+                };
+              }
+            ).BarcodeDetector;
+
+            const detector = new BarcodeDetectorClass({
+              formats: [
+                "ean_13",
+                "ean_8",
+                "upc_a",
+                "upc_e",
+              ],
+            });
+
+            const image = await createImageBitmap(file);
+
+            const barcodes = await detector.detect(image);
+
+            image.close();
+
+            if (barcodes.length === 0) {
+              alert(
+                "バーコードを読み取れませんでした。\nもう一度、JANコードを画面いっぱいに写してください。"
+              );
+              return;
+            }
+
+            const jan = barcodes[0].rawValue ?? "";
+
+            setProductForm({
+              ...productForm,
+              jan_code: jan,
+            });
+
+            alert(`JANコードを読み取りました！\n${jan}`);
+          } catch (error) {
+            console.error(error);
+            alert(
+              "バーコードの読み取りに失敗しました。\nもう一度試してください。"
+            );
+          } finally {
+            e.target.value = "";
+          }
+        }}
+      />
+    </label>
+  </div>
+</label>
                   <label>
                     SKU
                     <input
