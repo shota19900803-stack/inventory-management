@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { BrowserMultiFormatReader } from "@zxing/browser";
 import { supabaseBrowser } from "../lib/supabase";
 
@@ -118,7 +118,49 @@ export default function Dashboard() {
 
   const [productForm, setProductForm] =
     useState(initialProductForm);
+const [scanning, setScanning] = useState(false);
+  const startJanScanner = async () => {
+  setScanning(true);
 
+  try {
+    if (!videoRef.current) {
+      setScanning(false);
+      return;
+    }
+
+    const reader = new BrowserMultiFormatReader();
+
+    const controls = await reader.decodeFromConstraints(
+      {
+        video: {
+          facingMode: { ideal: "environment" },
+        },
+      },
+      videoRef.current,
+      (result) => {
+        if (result) {
+          const jan = result.getText();
+
+          setProductForm({
+            ...productForm,
+            jan_code: jan,
+          });
+
+          controls.stop();
+          setScanning(false);
+        }
+      }
+    );
+  } catch (error) {
+    console.error(error);
+    setScanning(false);
+
+    alert(
+      "カメラを起動できませんでした。\nカメラの使用を許可して、もう一度お試しください。"
+    );
+  }
+};
+const videoRef = useRef<HTMLVideoElement | null>(null);
   const [purchaseForm, setPurchaseForm] =
     useState(initialPurchaseForm);
 
@@ -1569,49 +1611,75 @@ async function saveSale(
         whiteSpace: "nowrap",
       }}
     >
-   📷 JAN読取
-<input
-  type="file"
-  accept="image/*"
-  capture="environment"
-  style={{ display: "none" }}
-  onChange={async (e) => {
-    const file = e.target.files?.[0];
+ <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+  <button
+    type="button"
+    onClick={startJanScanner}
+    style={{
+      padding: "12px 18px",
+      background: "#15803d",
+      color: "#fff",
+      border: "none",
+      borderRadius: 10,
+      fontWeight: 700,
+      cursor: "pointer",
+      whiteSpace: "nowrap",
+    }}
+  >
+    📷 JAN読取
+  </button>
+</div>
 
-    if (!file) return;
+{scanning && (
+  <div
+    style={{
+      marginTop: 16,
+      padding: 12,
+      background: "#000",
+      borderRadius: 12,
+    }}
+  >
+    <video
+      ref={videoRef}
+      autoPlay
+      muted
+      playsInline
+      style={{
+        width: "100%",
+        display: "block",
+        borderRadius: 8,
+      }}
+    />
 
-    try {
-      const reader = new BrowserMultiFormatReader();
+    <div
+      style={{
+        color: "#fff",
+        textAlign: "center",
+        marginTop: 10,
+        fontWeight: 700,
+      }}
+    >
+      📷 JANコードをカメラに映してください
+    </div>
 
-      const imageUrl = URL.createObjectURL(file);
-
-      const result = await reader.decodeFromImageUrl(imageUrl);
-
-      URL.revokeObjectURL(imageUrl);
-
-      const jan = result.getText();
-
-      if (!jan) {
-        alert("JANコードを読み取れませんでした。\nもう一度お試しください。");
-        return;
-      }
-
-      setProductForm({
-        ...productForm,
-        jan_code: jan,
-      });
-
-    } catch (error) {
-      console.error(error);
-
-      alert(
-        "JANコードを読み取れませんでした。\nバーコードを画面いっぱいに映して、もう一度お試しください。"
-      );
-    } finally {
-      e.target.value = "";
-    }
-  }}
-/>
+    <button
+      type="button"
+      onClick={() => setScanning(false)}
+      style={{
+        marginTop: 10,
+        width: "100%",
+        padding: "10px",
+        background: "#fff",
+        color: "#111827",
+        border: "none",
+        borderRadius: 8,
+        fontWeight: 700,
+      }}
+    >
+      閉じる
+    </button>
+  </div>
+)}
     </label>
   </div>
 </label>
