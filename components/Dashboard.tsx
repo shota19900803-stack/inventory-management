@@ -1612,7 +1612,7 @@ async function saveSale(
     }
   }}
 />
-          }
+          
         }}
       />
     </label>
