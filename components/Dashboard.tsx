@@ -160,7 +160,7 @@ const [scanning, setScanning] = useState(false);
     );
   }
 };
-const videoRef = useRef<HTMLVideoElement | null>(null);
+
   const [purchaseForm, setPurchaseForm] =
     useState(initialPurchaseForm);
 
