@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { BrowserMultiFormatReader } from "@zxing/browser";
 import { supabaseBrowser } from "../lib/supabase";
 
 type Product = {
@@ -1568,75 +1569,49 @@ async function saveSale(
         whiteSpace: "nowrap",
       }}
     >
-      📷 JAN読取
-      <input
-        type="file"
-        accept="image/*"
-        capture="environment"
-        style={{ display: "none" }}
-        onChange={async (e) => {
-          const file = e.target.files?.[0];
+   📷 JAN読取
+<input
+  type="file"
+  accept="image/*"
+  capture="environment"
+  style={{ display: "none" }}
+  onChange={async (e) => {
+    const file = e.target.files?.[0];
 
-          if (!file) return;
+    if (!file) return;
 
-          try {
-            // iPhoneなどの対応ブラウザでバーコードを読み取る
-            if (!("BarcodeDetector" in window)) {
-              alert(
-                "このブラウザはバーコード自動読み取りに対応していません。\nJANコードを手入力してください。"
-              );
-              return;
-            }
+    try {
+      const reader = new BrowserMultiFormatReader();
 
-            const BarcodeDetectorClass = (
-              window as typeof window & {
-                BarcodeDetector: new (options?: {
-                  formats?: string[];
-                }) => {
-                  detect(
-                    image: ImageBitmap
-                  ): Promise<Array<{ rawValue?: string }>>;
-                };
-              }
-            ).BarcodeDetector;
+      const imageUrl = URL.createObjectURL(file);
 
-            const detector = new BarcodeDetectorClass({
-              formats: [
-                "ean_13",
-                "ean_8",
-                "upc_a",
-                "upc_e",
-              ],
-            });
+      const result = await reader.decodeFromImageUrl(imageUrl);
 
-            const image = await createImageBitmap(file);
+      URL.revokeObjectURL(imageUrl);
 
-            const barcodes = await detector.detect(image);
+      const jan = result.getText();
 
-            image.close();
+      if (!jan) {
+        alert("JANコードを読み取れませんでした。\nもう一度お試しください。");
+        return;
+      }
 
-            if (barcodes.length === 0) {
-              alert(
-                "バーコードを読み取れませんでした。\nもう一度、JANコードを画面いっぱいに写してください。"
-              );
-              return;
-            }
+      setProductForm({
+        ...productForm,
+        jan_code: jan,
+      });
 
-            const jan = barcodes[0].rawValue ?? "";
+    } catch (error) {
+      console.error(error);
 
-            setProductForm({
-              ...productForm,
-              jan_code: jan,
-            });
-
-            alert(`JANコードを読み取りました！\n${jan}`);
-          } catch (error) {
-            console.error(error);
-            alert(
-              "バーコードの読み取りに失敗しました。\nもう一度試してください。"
-            );
-          } finally {
-            e.target.value = "";
+      alert(
+        "JANコードを読み取れませんでした。\nバーコードを画面いっぱいに映して、もう一度お試しください。"
+      );
+    } finally {
+      e.target.value = "";
+    }
+  }}
+/>
           }
         }}
       />
