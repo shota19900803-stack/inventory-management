@@ -117,9 +117,13 @@ export default function Dashboard() {
     useState<string | null>(null);
 
   const [productForm, setProductForm] =
-    useState(initialProductForm);
+  useState(initialProductForm);
+
+const videoRef = useRef<HTMLVideoElement | null>(null);
+
 const [scanning, setScanning] = useState(false);
-  const startJanScanner = async () => {
+
+const startJanScanner = async () => {
   setScanning(true);
 
   try {
