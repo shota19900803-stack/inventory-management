@@ -130,27 +130,36 @@ const [scanning, setScanning] = useState(false);
 
     const reader = new BrowserMultiFormatReader();
 
-    const controls = await reader.decodeFromConstraints(
-      {
-        video: {
-          facingMode: { ideal: "environment" },
-        },
-      },
-      videoRef.current,
-      (result) => {
-        if (result) {
-          const jan = result.getText();
+console.log("JANスキャン開始");
 
-          setProductForm({
-            ...productForm,
-            jan_code: jan,
-          });
+const controls = await reader.decodeFromConstraints(
+  {
+    video: {
+      facingMode: { ideal: "environment" },
+    },
+  },
+  videoRef.current,
+  (result, error) => {
+    if (result) {
+      const jan = result.getText();
 
-          controls.stop();
-          setScanning(false);
-        }
-      }
-    );
+      console.log("JANコード検出:", jan);
+
+      setProductForm((prev) => ({
+        ...prev,
+        jan_code: jan,
+      }));
+
+      controls.stop();
+      setScanning(false);
+    }
+
+    if (error) {
+      console.log("スキャン中:", error);
+    }
+  }
+);
+
   } catch (error) {
     console.error(error);
     setScanning(false);
