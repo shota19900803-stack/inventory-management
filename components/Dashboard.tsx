@@ -205,7 +205,66 @@ const controlsRef = useRef<any>(null);
 const [scanning, setScanning] = useState(false);
 const [scannerMessage, setScannerMessage] =
   useState("カメラを起動しています…");
+const loadAll = async () => {
+  setLoading(true);
 
+  const [
+    productsResult,
+    purchasesResult,
+    salesResult,
+  ] = await Promise.all([
+    supabase
+      .from("products")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(1000),
+
+    supabase
+      .from("purchase_history")
+      .select("*")
+      .order("purchase_date", { ascending: false })
+      .limit(2000),
+
+    supabase
+      .from("sales_history")
+      .select("*")
+      .eq("is_cancelled", false)
+      .order("sale_date", { ascending: false })
+      .limit(2000),
+  ]);
+
+  if (productsResult.error) {
+    setMessage(
+      `商品読み込みエラー：${productsResult.error.message}`
+    );
+  } else {
+    setProducts(
+      (productsResult.data ?? []) as Product[]
+    );
+  }
+
+  if (purchasesResult.error) {
+    setMessage(
+      `仕入履歴読み込みエラー：${purchasesResult.error.message}`
+    );
+  } else {
+    setPurchases(
+      (purchasesResult.data ?? []) as Purchase[]
+    );
+  }
+
+  if (salesResult.error) {
+    setMessage(
+      `売上履歴読み込みエラー：${salesResult.error.message}`
+    );
+  } else {
+    setSales(
+      (salesResult.data ?? []) as Sale[]
+    );
+  }
+
+  setLoading(false);
+};
 const startJanScanner = () => {
   setScannerMessage(
     "カメラを起動しています…"
