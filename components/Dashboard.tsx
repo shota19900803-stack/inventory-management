@@ -260,7 +260,7 @@ async function loadAll() {
   } else {
     setSales(
       (salesResult.data ?? []) as Sale[]
-}
+);
   
 
   setLoading(false);
