@@ -261,10 +261,10 @@ async function loadAll() {
     setSales(
       (salesResult.data ?? []) as Sale[]
 }
-  }
+  
 
   setLoading(false);
-};
+}
 const startJanScanner = () => {
   setScannerMessage(
     "カメラを起動しています…"
