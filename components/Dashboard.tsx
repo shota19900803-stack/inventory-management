@@ -205,7 +205,7 @@ const controlsRef = useRef<any>(null);
 const [scanning, setScanning] = useState(false);
 const [scannerMessage, setScannerMessage] =
   useState("カメラを起動しています…");
-const loadAll = async () => {
+async function loadAll() {
   setLoading(true);
 
   const [
@@ -260,11 +260,11 @@ const loadAll = async () => {
   } else {
     setSales(
       (salesResult.data ?? []) as Sale[]
-    );
+}
   }
 
   setLoading(false);
-};
+}
 const startJanScanner = () => {
   setScannerMessage(
     "カメラを起動しています…"
