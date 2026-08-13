@@ -128,7 +128,13 @@ export default function Dashboard() {
   const [selectedMonth, setSelectedMonth] =
   useState(today.slice(0, 7));
 
- 
+ const videoRef = useRef<HTMLVideoElement | null>(null);
+const scannerRef = useRef<BrowserMultiFormatReader | null>(null);
+const controlsRef = useRef<any>(null);
+
+const [scanning, setScanning] = useState(false);
+const [scannerMessage, setScannerMessage] =
+  useState("カメラを起動しています…");
 const months = useMemo(() => {
   const set = new Set<string>();
 
