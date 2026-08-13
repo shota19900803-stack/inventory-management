@@ -360,6 +360,12 @@ useEffect(() => {
     );
   }, [sales, selectedMonth]);
 
+  const monthSales = useMemo(() => {
+  return sales.filter(
+    (sale) => monthOf(sale.sale_date) === selectedMonth
+  );
+}, [sales, selectedMonth]);
+  
   const monthPurchases = useMemo(() => {
     return purchases.filter(
       (purchase) =>
