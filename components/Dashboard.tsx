@@ -264,7 +264,7 @@ async function loadAll() {
   }
 
   setLoading(false);
-}
+};
 const startJanScanner = () => {
   setScannerMessage(
     "カメラを起動しています…"
