@@ -197,7 +197,8 @@ const months = useMemo(() => {
   );
 
   set.add(today.slice(0, 7));
-
+return Array.from(set).sort().reverse();
+}, [sales, purchases, today]);
 const videoRef = useRef<HTMLVideoElement | null>(null);
 const scannerRef = useRef<BrowserMultiFormatReader | null>(null);
 const controlsRef = useRef<any>(null);
