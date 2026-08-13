@@ -148,7 +148,8 @@ const controls = await reader.decodeFromConstraints(
       const jan = result.getText();
 
       console.log("JANコード検出:", jan);
-
+alert("JAN認識：" + jan);
+      
       setProductForm((prev) => ({
         ...prev,
         jan_code: jan,
@@ -197,100 +198,163 @@ const months = useMemo(() => {
 
   set.add(today.slice(0, 7));
 
-  return Array.from(set).sort().reverse();
-}, [sales, purchases]);
+const videoRef = useRef<HTMLVideoElement | null>(null);
+const scannerRef = useRef<BrowserMultiFormatReader | null>(null);
+const controlsRef = useRef<any>(null);
 
+const [scanning, setScanning] = useState(false);
+const [scannerMessage, setScannerMessage] =
+  useState("カメラを起動しています…");
 
+const startJanScanner = () => {
+  setScannerMessage(
+    "カメラを起動しています…"
+  );
+  setScanning(true);
+};
 
-  async function loadAll() {
-    setLoading(true);
+const closeJanScanner = () => {
+  try {
+    controlsRef.current?.stop();
+  } catch {}
 
-    const [
-      productsResult,
-      purchasesResult,
-      salesResult,
-    ] = await Promise.all([
-      supabase
-        .from("products")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(1000),
+  controlsRef.current = null;
+  scannerRef.current = null;
 
-      supabase
-        .from("purchase_history")
-        .select("*")
-        .order("purchase_date", { ascending: false })
-        .limit(2000),
+  setScanning(false);
+};
 
-      supabase
-  .from("sales_history")
-  .select("*")
-  .eq("is_cancelled", false)
-  .order("sale_date", { ascending: false })
-  .limit(2000)
-    ]);
-
-    if (productsResult.error) {
-      setMessage(
-        `商品読み込みエラー: ${productsResult.error.message}`
-      );
-    } else {
-      setProducts((productsResult.data ?? []) as Product[]);
-    }
-
-    if (purchasesResult.error) {
-      setMessage(
-        `仕入履歴読み込みエラー: ${purchasesResult.error.message}`
-      );
-    } else {
-      setPurchases((purchasesResult.data ?? []) as Purchase[]);
-    }
-
-    if (salesResult.error) {
-      setMessage(
-        `売上履歴読み込みエラー: ${salesResult.error.message}`
-      );
-    } else {
-      setSales((salesResult.data ?? []) as Sale[]);
-    }
-
-    setLoading(false);
+useEffect(() => {
+  if (!scanning) {
+    return;
   }
 
-  useEffect(() => {
-    loadAll();
-  }, []);
+  let cancelled = false;
 
-  const productMap = useMemo(() => {
-    const map: Record<string, Product> = {};
+  const startCamera = async () => {
+    try {
+      setScannerMessage(
+        "カメラを起動しています…"
+      );
 
-    for (const product of products) {
-      map[product.id] = product;
+      if (!videoRef.current) {
+        setScannerMessage(
+          "カメラ画面を準備しています…"
+        );
+        return;
+      }
+
+      const reader =
+        new BrowserMultiFormatReader();
+
+      scannerRef.current = reader;
+
+      setScannerMessage(
+        "JANコードをカメラに映してください"
+      );
+
+      const controls =
+        await reader.decodeFromConstraints(
+          {
+            video: {
+              facingMode: {
+                ideal: "environment",
+              },
+            },
+          },
+          videoRef.current,
+          (result, error) => {
+            if (cancelled) {
+              return;
+            }
+
+            if (result) {
+              const jan =
+                result
+                  .getText()
+                  .replace(/\D/g, "");
+
+              console.log(
+                "JANコード検出:",
+                jan
+              );
+
+              if (jan.length === 13) {
+                setProductForm((prev) => ({
+                  ...prev,
+                  jan_code: jan,
+                }));
+
+                setScannerMessage(
+                  `読み取り成功：${jan}`
+                );
+
+                controls.stop();
+                controlsRef.current = null;
+                scannerRef.current = null;
+
+                setTimeout(() => {
+                  if (!cancelled) {
+                    setScanning(false);
+                  }
+                }, 500);
+              }
+            }
+
+            if (error) {
+              console.log(
+                "スキャン中:",
+                error
+              );
+            }
+          }
+        );
+
+      if (cancelled) {
+        controls.stop();
+        return;
+      }
+
+      controlsRef.current = controls;
+    } catch (error) {
+      console.error(
+        "JANスキャンエラー:",
+        error
+      );
+
+      if (!cancelled) {
+        setScannerMessage(
+          "カメラを起動できませんでした。"
+        );
+
+        alert(
+          "カメラを起動できませんでした。\n\n" +
+          "Safariのカメラ使用許可を確認して、もう一度お試しください。"
+        );
+
+        setScanning(false);
+      }
     }
+  };
 
-    return map;
-  }, [products]);
+  startCamera();
 
-  const filteredProducts = useMemo(() => {
-    const keyword = productSearch.trim().toLowerCase();
+  return () => {
+    cancelled = true;
 
-    if (!keyword) return products;
+    try {
+      controlsRef.current?.stop();
+    } catch {}
 
-    return products.filter((product) =>
-      [
-        product.name,
-        product.jan_code,
-        product.sku,
-        product.model_number,
-        product.brand,
-        product.category,
-      ].some((value) =>
-        (value ?? "").toLowerCase().includes(keyword)
-      )
-    );
-  }, [products, productSearch]);
+    controlsRef.current = null;
+    scannerRef.current = null;
 
-  const monthSales = useMemo(() => {
+    if (videoRef.current) {
+      videoRef.current.pause();
+      videoRef.current.srcObject = null;
+    }
+  };
+}, [scanning]);
     return sales.filter(
       (sale) => monthOf(sale.sale_date) === selectedMonth
     );
