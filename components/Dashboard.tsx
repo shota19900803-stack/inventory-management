@@ -119,62 +119,6 @@ export default function Dashboard() {
   const [productForm, setProductForm] =
   useState(initialProductForm);
 
-const videoRef = useRef<HTMLVideoElement | null>(null);
-
-const [scanning, setScanning] = useState(false);
-
-const startJanScanner = async () => {
-  setScanning(true);
-
-  try {
-    if (!videoRef.current) {
-      setScanning(false);
-      return;
-    }
-
-    const reader = new BrowserMultiFormatReader();
-
-console.log("JANスキャン開始");
-
-const controls = await reader.decodeFromConstraints(
-  {
-    video: {
-      facingMode: { ideal: "environment" },
-    },
-  },
-  videoRef.current,
-  (result, error) => {
-    if (result) {
-      const jan = result.getText();
-
-      console.log("JANコード検出:", jan);
-alert("JAN認識：" + jan);
-      
-      setProductForm((prev) => ({
-        ...prev,
-        jan_code: jan,
-      }));
-
-      controls.stop();
-      setScanning(false);
-    }
-
-    if (error) {
-      console.log("スキャン中:", error);
-    }
-  }
-);
-
-  } catch (error) {
-    console.error(error);
-    setScanning(false);
-
-    alert(
-      "カメラを起動できませんでした。\nカメラの使用を許可して、もう一度お試しください。"
-    );
-  }
-};
-
   const [purchaseForm, setPurchaseForm] =
     useState(initialPurchaseForm);
 
@@ -248,17 +192,17 @@ async function loadAll() {
     );
   }
 
-  if (salesResult.error) {
-    setMessage(
-      `売上履歴読み込みエラー：${salesResult.error.message}`
-    );
-  } else {
-    setSales(
-      (salesResult.data ?? []) as Sale[]
-);
-  
+if (salesResult.error) {
+  setMessage(
+    `売上履歴読み込みエラー：${salesResult.error.message}`
+  );
+} else {
+  setSales(
+    (salesResult.data ?? []) as Sale[]
+  );
+}
 
-  setLoading(false);
+setLoading(false);
 }
 const startJanScanner = () => {
   setScannerMessage(
@@ -409,10 +353,6 @@ useEffect(() => {
     }
   };
 }, [scanning]);
-    return sales.filter(
-      (sale) => monthOf(sale.sale_date) === selectedMonth
-    );
-  }, [sales, selectedMonth]);
 
   const monthSales = useMemo(() => {
   return sales.filter(
