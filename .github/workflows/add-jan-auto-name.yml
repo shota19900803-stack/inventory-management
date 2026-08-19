@@ -3,8 +3,6 @@ name: Apply JAN auto lookup
 on:
   push:
     branches: [main]
-    paths:
-      - "pages/api/jan-search.ts"
 
 permissions:
   contents: write
