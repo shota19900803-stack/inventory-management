@@ -729,6 +729,11 @@ async function saveSale(
 ) {
   event.preventDefault();
 
+  // 二重送信防止
+  if (saving) {
+    return;
+  }
+
   if (!saleForm.product_id) {
     setMessage("商品を選択してください。");
     return;
