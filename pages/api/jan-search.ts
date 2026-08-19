@@ -88,3 +88,5 @@ export default async function handler(
     });
   }
 }
+
+// Trigger dashboard patch workflow.
