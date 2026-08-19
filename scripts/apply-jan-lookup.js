@@ -9,14 +9,16 @@ if (text.includes("const janLookupRef = useRef(false);")) {
   process.exit(0);
 }
 
-const refOld = `const controlsRef = useRef<any>(null);\nconst [scanning, setScanning] = useState(false);`;
-const refNew = `const controlsRef = useRef<any>(null);\nconst janLookupRef = useRef(false);\nconst [scanning, setScanning] = useState(false);`;
+const refPattern = /const controlsRef = useRef<any>\(null\);\s*const \[scanning, setScanning\] = useState\(false\);/;
 
-if (!text.includes(refOld)) {
+if (!refPattern.test(text)) {
   throw new Error("JAN scanner reference block was not found.");
 }
 
-text = text.replace(refOld, refNew);
+text = text.replace(
+  refPattern,
+  `const controlsRef = useRef<any>(null);\nconst janLookupRef = useRef(false);\nconst [scanning, setScanning] = useState(false);`
+);
 
 const start = text.indexOf("const startJanScanner = () => {");
 const end = text.indexOf("  const monthSales = useMemo", start);
@@ -26,9 +28,7 @@ if (start === -1 || end === -1) {
 }
 
 const newBlock = `async function lookupProductByJan(jan: string) {
-  if (janLookupRef.current) {
-    return;
-  }
+  if (janLookupRef.current) return;
 
   janLookupRef.current = true;
   setMessage("");
@@ -66,10 +66,15 @@ const newBlock = `async function lookupProductByJan(jan: string) {
     }
 
     const response = await fetch(
-      \`/api/jan-search?jan=\${encodeURIComponent(jan)}\`
+      \`/api/jan-search?jan=\${encodeURIComponent(jan)}\`,
+      { cache: "no-store" }
     );
 
     const data = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      throw new Error(data?.error || "JAN商品検索に失敗しました。");
+    }
 
     if (data?.found && data.product) {
       setEditingProductId(null);
@@ -88,6 +93,7 @@ const newBlock = `async function lookupProductByJan(jan: string) {
       );
       setScannerMessage(\`商品情報取得成功：\${jan}\`);
     } else {
+      setEditingProductId(null);
       setProductForm((prev) => ({
         ...prev,
         jan_code: jan,
@@ -100,6 +106,7 @@ const newBlock = `async function lookupProductByJan(jan: string) {
   } catch (error) {
     console.error("JAN商品情報取得エラー:", error);
 
+    setEditingProductId(null);
     setProductForm((prev) => ({
       ...prev,
       jan_code: jan,
@@ -115,9 +122,7 @@ const newBlock = `async function lookupProductByJan(jan: string) {
 }
 
 const startJanScanner = () => {
-  setScannerMessage(
-    "カメラを起動しています…"
-  );
+  setScannerMessage("カメラを起動しています…");
   setScanning(true);
 };
 
@@ -128,86 +133,58 @@ const closeJanScanner = () => {
 
   controlsRef.current = null;
   scannerRef.current = null;
-
   setScanning(false);
 };
 
 useEffect(() => {
-  if (!scanning) {
-    return;
-  }
+  if (!scanning) return;
 
   let cancelled = false;
 
   const startCamera = async () => {
     try {
-      setScannerMessage(
-        "カメラを起動しています…"
-      );
+      setScannerMessage("カメラを起動しています…");
 
       if (!videoRef.current) {
-        setScannerMessage(
-          "カメラ画面を準備しています…"
-        );
+        setScannerMessage("カメラ画面を準備しています…");
         return;
       }
 
-      const reader =
-        new BrowserMultiFormatReader();
-
+      const reader = new BrowserMultiFormatReader();
       scannerRef.current = reader;
+      setScannerMessage("JANコードをカメラに映してください");
 
-      setScannerMessage(
-        "JANコードをカメラに映してください"
-      );
-
-      const controls =
-        await reader.decodeFromConstraints(
-          {
-            video: {
-              facingMode: {
-                ideal: "environment",
-              },
-            },
+      const controls = await reader.decodeFromConstraints(
+        {
+          video: {
+            facingMode: { ideal: "environment" },
           },
-          videoRef.current,
-          (result, error) => {
-            if (cancelled) {
-              return;
-            }
-
-            if (result && !janLookupRef.current) {
-              const jan =
-                result
-                  .getText()
-                  .replace(/\\D/g, "");
-
-              console.log(
-                "JANコード検出:",
-                jan
-              );
-
-              if (jan.length === 13) {
-                try {
-                  controls.stop();
-                } catch {}
-
-                controlsRef.current = null;
-                scannerRef.current = null;
-
-                setScanning(false);
-                void lookupProductByJan(jan);
-              }
-            }
-
-            if (error) {
-              console.log(
-                "スキャン中:",
-                error
-              );
-            }
+        },
+        videoRef.current,
+        (result, error) => {
+          if (cancelled || janLookupRef.current || !result) {
+            if (error) console.log("スキャン中:", error);
+            return;
           }
-        );
+
+          const jan = result.getText().replace(/\\D/g, "");
+          console.log("JANコード検出:", jan);
+
+          if (jan.length !== 13) {
+            if (error) console.log("スキャン中:", error);
+            return;
+          }
+
+          try {
+            controlsRef.current?.stop();
+          } catch {}
+
+          controlsRef.current = null;
+          scannerRef.current = null;
+          setScanning(false);
+          void lookupProductByJan(jan);
+        }
+      );
 
       if (cancelled) {
         controls.stop();
@@ -216,27 +193,20 @@ useEffect(() => {
 
       controlsRef.current = controls;
     } catch (error) {
-      console.error(
-        "JANスキャンエラー:",
-        error
-      );
+      console.error("JANスキャンエラー:", error);
 
       if (!cancelled) {
-        setScannerMessage(
-          "カメラを起動できませんでした。"
-        );
-
+        setScannerMessage("カメラを起動できませんでした。");
         alert(
           "カメラを起動できませんでした。\\n\\n" +
           "Safariのカメラ使用許可を確認して、もう一度お試しください。"
         );
-
         setScanning(false);
       }
     }
   };
 
-  startCamera();
+  void startCamera();
 
   return () => {
     cancelled = true;
