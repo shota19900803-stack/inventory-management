@@ -135,6 +135,13 @@ const controlsRef = useRef<any>(null);
 const [scanning, setScanning] = useState(false);
 const [scannerMessage, setScannerMessage] =
   useState("カメラを起動しています…");
+  const productMap = useMemo(
+  () =>
+    Object.fromEntries(
+      products.map((product) => [product.id, product])
+    ),
+  [products]
+);
 const months = useMemo(() => {
   const set = new Set<string>();
 
