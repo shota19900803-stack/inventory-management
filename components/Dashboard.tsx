@@ -235,6 +235,9 @@ if (salesResult.error) {
 
 setLoading(false);
 }
+useEffect(() => {
+  loadAll();
+}, []);
 const startJanScanner = () => {
   setScannerMessage(
     "カメラを起動しています…"
