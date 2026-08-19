@@ -71,13 +71,11 @@ export async function GET(request: NextRequest) {
 
     const hits = Array.isArray(data?.hits) ? data.hits : [];
 
-    // JAN完全一致を最優先。Yahoo側の検索結果が複数ある場合でも、
-    // 別JANの商品を誤って採用しないようにする。
-    const hit =
-      hits.find(
-        (item: { janCode?: string | number }) =>
-          String(item?.janCode ?? "").replace(/\D/g, "") === jan
-      ) ?? hits[0];
+    // JAN完全一致だけを採用し、別商品を誤入力しないようにする。
+    const hit = hits.find(
+      (item: { janCode?: string | number }) =>
+        String(item?.janCode ?? "").replace(/\D/g, "") === jan
+    );
 
     if (!hit) {
       return NextResponse.json({ found: false });
