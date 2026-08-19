@@ -876,75 +876,52 @@ async function saveSale(
   }
 }
 }
- async function cancelSale(sale: any) {
+async function cancelSale(sale: any) {
   const proceed = window.confirm(
-    `この売上を取消しますか？\n\n売上金額：¥${Number(
-      sale.total_sales || 0
-    ).toLocaleString()}\n数量：${sale.quantity}個`
+    `この売上を取消しますか？\n\n売上金額：¥${Number(sale.total_sales || 0).toLocaleString()}\n数量：${Number(sale.quantity || 0)}個`
   );
 
   if (!proceed) {
     return;
   }
 
-  setSaving(true);
   setMessage("");
 
   try {
-    // ==========================================
-    // Supabase側の一括取消処理を実行
-    // ==========================================
+    // すでに取消済みなら処理しない
+    if (sale.is_cancelled) {
+      setMessage("この売上はすでに取消済みです。");
+      return;
+    }
 
+    // SupabaseのDB関数で売上取消を実行
+    // 在庫復元・売上取消・在庫履歴登録をDB側でまとめて処理
     const { data, error } = await supabase.rpc("cancel_sale", {
       p_sale_id: sale.id,
     });
 
-    // RPCエラー
     if (error) {
       setMessage(`売上取消エラー：${error.message}`);
       return;
     }
 
-    // ==========================================
-    // 取消済みだった場合
-    // ==========================================
-
-    if (data?.already_cancelled) {
-      setMessage("この売上はすでに取消済みです。");
+    // DB関数からエラーが返された場合
+    if (data?.success === false) {
+      setMessage(`売上取消エラー：${data.message || "取消処理に失敗しました。"}`);
       return;
     }
 
-    // ==========================================
-    // 失敗
-    // ==========================================
-
-    if (!data?.success) {
-      setMessage(
-        data?.message || "売上取消に失敗しました。"
-      );
-      return;
-    }
-
-    // ==========================================
-    // 成功
-    // ==========================================
-
-    setMessage(
-      data.message ||
-        "売上を取消しました。在庫を元に戻しました。"
-    );
+    setMessage("売上を取消しました。在庫も元に戻しました。");
 
     // 最新データを再取得
     await loadAll();
 
-  } catch (error: any) {
+  } catch (error) {
     setMessage(
       `売上取消エラー：${
-        error?.message || String(error)
+        error instanceof Error ? error.message : String(error)
       }`
     );
-  } finally {
-    setSaving(false);
   }
 }
   
