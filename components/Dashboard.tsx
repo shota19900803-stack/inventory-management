@@ -875,7 +875,7 @@ async function saveSale(
 
   }
 }
-}
+
 async function cancelSale(sale: any) {
   const proceed = window.confirm(
     `この売上を取消しますか？\n\n売上金額：¥${Number(sale.total_sales || 0).toLocaleString()}\n数量：${Number(sale.quantity || 0)}個`
