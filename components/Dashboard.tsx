@@ -876,110 +876,77 @@ async function saveSale(
   }
 }
 }
-  async function cancelSale(sale: any) {
-    const proceed = window.confirm(
-      `この売上を取消しますか？\n\n売上金額：¥${yen(sale.total_sales)}\n数量：${sale.quantity}個`
-    );
+ async function cancelSale(sale: any) {
+  const proceed = window.confirm(
+    `この売上を取消しますか？\n\n売上金額：¥${Number(
+      sale.total_sales || 0
+    ).toLocaleString()}\n数量：${sale.quantity}個`
+  );
 
-    if (!proceed) {
+  if (!proceed) {
+    return;
+  }
+
+  setSaving(true);
+  setMessage("");
+
+  try {
+    // ==========================================
+    // Supabase側の一括取消処理を実行
+    // ==========================================
+
+    const { data, error } = await supabase.rpc("cancel_sale", {
+      p_sale_id: sale.id,
+    });
+
+    // RPCエラー
+    if (error) {
+      setMessage(`売上取消エラー：${error.message}`);
       return;
     }
 
-    setSaving(true);
-    setMessage("");
+    // ==========================================
+    // 取消済みだった場合
+    // ==========================================
 
-    try {
-      // すでに取消済みなら処理しない
-      if (sale.is_cancelled) {
-        setMessage("この売上はすでに取消済みです。");
-        setSaving(false);
-        return;
-      }
-
-      // 商品を取得
-      const product = products.find(
-        (item) => item.id === sale.product_id
-      );
-
-      if (!product) {
-        setMessage("商品が見つかりません。");
-        setSaving(false);
-        return;
-      }
-
-      const currentStock = Number(product.stock_quantity || 0);
-      const quantity = Number(sale.quantity || 0);
-      const newStock = currentStock + quantity;
-
-      // 在庫を元に戻す
-      const stockResult = await supabase
-        .from("products")
-        .update({
-          stock_quantity: newStock,
-        })
-        .eq("id", sale.product_id);
-
-      if (stockResult.error) {
-        setMessage(
-          `在庫復元エラー：${stockResult.error.message}`
-        );
-        setSaving(false);
-        return;
-      }
-
-      // 売上を取消済みにする
-      const salesResult = await supabase
-  .from("sales_history")
-  .update({
-    is_cancelled: true,
-  })
-  .eq("id", sale.id)
-  .select("id, is_cancelled")
-  .single();
-
-      if (salesResult.error) {
-        setMessage(
-          `売上取消エラー：${salesResult.error.message}`
-        );
-        setSaving(false);
-        return;
-      }
-
-      // 在庫履歴に取消を記録
-      const transactionResult = await supabase
-        .from("inventory_transactions")
-        .insert({
-          product_id: sale.product_id,
-          transaction_type: "sale",
-          quantity: quantity,
-          stock_before: currentStock,
-          stock_after: newStock,
-          reason: "売上取消",
-          reference_number: sale.order_number || null,
-        });
-
-      if (transactionResult.error) {
-        setMessage(
-          `在庫履歴登録エラー：${transactionResult.error.message}`
-        );
-        setSaving(false);
-        return;
-      }
-
-      setMessage("売上を取消しました。在庫も元に戻しました。");
-
-      await loadAll();
-
-      setSaving(false);
-    } catch (error) {
-      setMessage(
-        `売上取消エラー：${
-          error instanceof Error ? error.message : String(error)
-        }`
-      );
-      setSaving(false);
+    if (data?.already_cancelled) {
+      setMessage("この売上はすでに取消済みです。");
+      return;
     }
+
+    // ==========================================
+    // 失敗
+    // ==========================================
+
+    if (!data?.success) {
+      setMessage(
+        data?.message || "売上取消に失敗しました。"
+      );
+      return;
+    }
+
+    // ==========================================
+    // 成功
+    // ==========================================
+
+    setMessage(
+      data.message ||
+        "売上を取消しました。在庫を元に戻しました。"
+    );
+
+    // 最新データを再取得
+    await loadAll();
+
+  } catch (error: any) {
+    setMessage(
+      `売上取消エラー：${
+        error?.message || String(error)
+      }`
+    );
+  } finally {
+    setSaving(false);
   }
+}
   
 
   
