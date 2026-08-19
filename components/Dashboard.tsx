@@ -111,6 +111,24 @@ export default function Dashboard() {
   const [message, setMessage] = useState("");
 
   const [productSearch, setProductSearch] = useState("");
+  const filteredProducts = useMemo(() => {
+  const keyword = productSearch.trim().toLowerCase();
+
+  if (!keyword) {
+    return products;
+  }
+
+  return products.filter((product) =>
+    [
+      product.name,
+      product.jan_code,
+      product.sku,
+      product.model_number,
+    ].some((value) =>
+      String(value ?? "").toLowerCase().includes(keyword)
+    )
+  );
+}, [products, productSearch]);
   const [historyProductId, setHistoryProductId] = useState("");
 
   const [editingProductId, setEditingProductId] =
