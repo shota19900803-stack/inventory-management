@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "prebuild": "node scripts/apply-jan-lookup.js && node scripts/apply-db-fixes.js && node scripts/apply-sales-platforms.js",
+    "prebuild": "node scripts/apply-jan-lookup.js && node scripts/apply-db-fixes.js && node scripts/apply-sales-platforms.js && node scripts/apply-inventory-value.js",
     "build": "next build",
     "start": "next start"
   },
