@@ -12,7 +12,7 @@ if (!text.includes('function salesPlatformGroup(')) {
 
   text = text.replace(
     marker,
-    `${marker}\nfunction salesPlatformGroup(channel: string | null | undefined) {\n  if (channel === "楽天市場") return "楽天市場";\n  if (channel === "Amazon") return "Amazon";\n  return "その他";\n}\n`
+    `${marker}\nfunction salesPlatformGroup(channel: string | null | undefined): "楽天市場" | "Amazon" | "その他" {\n  if (channel === "楽天市場") return "楽天市場";\n  if (channel === "Amazon") return "Amazon";\n  return "その他";\n}\n`
   );
 }
 
