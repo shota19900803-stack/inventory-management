@@ -57,49 +57,43 @@ if (!text.includes("const [stocktakeHistory, setStocktakeHistory]")) {
   text = text.replace(marker, addition);
 }
 
-// loadAllで棚卸し履歴も取得
-if (!text.includes('const stocktakeHistoryResult = await supabase')) {
-  const marker = join([
-    "  const [",
+// loadAllのPromiseに棚卸し履歴取得を追加
+if (!text.includes('.from("stocktake_history")')) {
+  const destructuringMarker = join([
     "    productsResult,",
     "    purchasesResult,",
     "    salesResult,",
     "  ] = await Promise.all([",
   ]);
-  const addition = join([
-    "  const [",
+  const destructuringAddition = join([
     "    productsResult,",
     "    purchasesResult,",
     "    salesResult,",
+    "    stocktakeHistoryResult,",
     "  ] = await Promise.all([",
-    "    supabase",
-    "      .from(\"products\")",
-    "      .select(\"*\")",
-    "      .order(\"created_at\", { ascending: false })",
-    "      .limit(1000),",
-    "",
-    "    supabase",
-    "      .from(\"purchase_history\")",
-    "      .select(\"*\")",
-    "      .order(\"purchase_date\", { ascending: false })",
-    "      .limit(2000),",
-    "",
-    "    supabase",
-    "      .from(\"sales_history\")",
-    "      .select(\"*\")",
-    "      .eq(\"is_cancelled\", false)",
-    "      .order(\"sale_date\", { ascending: false })",
-    "      .limit(2000),",
-    "",
-    "    supabase",
-    "      .from(\"stocktake_history\")",
-    "      .select(\"*\")",
-    "      .order(\"created_at\", { ascending: false })",
-    "      .limit(500),",
-    "  ]);",
   ]);
-  if (!text.includes(marker)) throw new Error("loadAll promise marker not found");
-  text = text.replace(marker, addition);
+  if (!text.includes(destructuringMarker)) throw new Error("loadAll destructuring marker not found");
+  text = text.replace(destructuringMarker, destructuringAddition);
+
+  const salesQueryMarker = join([
+    '    supabase',
+    '      .from("sales_history")',
+    '      .select("*")',
+    '      .eq("is_cancelled", false)',
+    '      .order("sale_date", { ascending: false })',
+    '      .limit(2000),',
+  ]);
+  const salesQueryAddition = join([
+    salesQueryMarker,
+    "",
+    '    supabase',
+    '      .from("stocktake_history")',
+    '      .select("*")',
+    '      .order("created_at", { ascending: false })',
+    '      .limit(500),',
+  ]);
+  if (!text.includes(salesQueryMarker)) throw new Error("sales query marker not found");
+  text = text.replace(salesQueryMarker, salesQueryAddition);
 
   const resultMarker = join([
     "if (salesResult.error) {",
@@ -115,16 +109,10 @@ if (!text.includes('const stocktakeHistoryResult = await supabase')) {
   const resultAddition = join([
     resultMarker,
     "",
-    "  const { data: stocktakeHistoryData, error: stocktakeHistoryError } = await supabase",
-    "    .from(\"stocktake_history\")",
-    "    .select(\"*\")",
-    "    .order(\"created_at\", { ascending: false })",
-    "    .limit(500);",
-    "",
-    "  if (stocktakeHistoryError) {",
-    "    console.warn(\"棚卸し履歴読み込みエラー：\", stocktakeHistoryError.message);",
+    "  if (stocktakeHistoryResult.error) {",
+    "    console.warn(\"棚卸し履歴読み込みエラー：\", stocktakeHistoryResult.error.message);",
     "  } else {",
-    "    setStocktakeHistory((stocktakeHistoryData ?? []) as StocktakeHistory[]);",
+    "    setStocktakeHistory((stocktakeHistoryResult.data ?? []) as StocktakeHistory[]);",
     "  }",
   ]);
   if (!text.includes(resultMarker)) throw new Error("sales result marker not found");
@@ -135,7 +123,7 @@ if (!text.includes('const stocktakeHistoryResult = await supabase')) {
 if (!text.includes('id="stocktake-history"')) {
   const marker = '        {tab === "sales" && (';
   const ui = join([
-    '        {tab === "stocktake" && stocktakeHistory.length > 0 && (',
+    '        {tab === "stocktake" && (',
     '          <section id="stocktake-history" style={cardStyle}>',
     '            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>',
     '              <div>',
@@ -144,36 +132,40 @@ if (!text.includes('id="stocktake-history"')) {
     '              </div>',
     '              <div style={{ fontWeight: 700, color: "#374151" }}>{stocktakeHistory.length}件</div>',
     '            </div>',
-    '            <div style={{ overflowX: "auto", marginTop: 15 }}>',
-    '              <table style={{ width: "100%", borderCollapse: "collapse" }}>',
-    '                <thead>',
-    '                  <tr>',
-    '                    <th style={{ textAlign: "left", padding: 10 }}>日時</th>',
-    '                    <th style={{ textAlign: "left", padding: 10 }}>商品</th>',
-    '                    <th style={{ textAlign: "left", padding: 10 }}>JAN</th>',
-    '                    <th style={{ textAlign: "right", padding: 10 }}>棚卸前</th>',
-    '                    <th style={{ textAlign: "right", padding: 10 }}>実在庫</th>',
-    '                    <th style={{ textAlign: "right", padding: 10 }}>差異</th>',
-    '                  </tr>',
-    '                </thead>',
-    '                <tbody>',
-    '                  {stocktakeHistory.map((history) => {',
-    '                    const product = productMap[history.product_id];',
-    '                    const diff = Number(history.difference || 0);',
-    '                    return (',
-    '                      <tr key={history.id} style={{ borderTop: "1px solid #f1f5f9" }}>',
-    '                        <td style={{ padding: 10, whiteSpace: "nowrap" }}>{new Date(history.created_at).toLocaleString("ja-JP")}</td>',
-    '                        <td style={{ padding: 10, fontWeight: 600 }}>{product?.name ?? "商品不明"}</td>',
-    '                        <td style={{ padding: 10 }}>{product?.jan_code ?? "—"}</td>',
-    '                        <td style={{ padding: 10, textAlign: "right" }}>{history.stock_before}</td>',
-    '                        <td style={{ padding: 10, textAlign: "right" }}>{history.stock_counted}</td>',
-    '                        <td style={{ padding: 10, textAlign: "right", fontWeight: 700, color: diff === 0 ? "#15803d" : diff > 0 ? "#2563eb" : "#dc2626" }}>{diff >= 0 ? "+" : ""}{diff}</td>',
-    '                      </tr>',
-    '                    );',
-    '                  })}',
-    '                </tbody>',
-    '              </table>',
-    '            </div>',
+    '            {stocktakeHistory.length === 0 ? (',
+    '              <p style={{ color: "#6b7280", marginTop: 18 }}>まだ棚卸し履歴はありません。</p>',
+    '            ) : (',
+    '              <div style={{ overflowX: "auto", marginTop: 15 }}>',
+    '                <table style={{ width: "100%", borderCollapse: "collapse" }}>',
+    '                  <thead>',
+    '                    <tr>',
+    '                      <th style={{ textAlign: "left", padding: 10 }}>日時</th>',
+    '                      <th style={{ textAlign: "left", padding: 10 }}>商品</th>',
+    '                      <th style={{ textAlign: "left", padding: 10 }}>JAN</th>',
+    '                      <th style={{ textAlign: "right", padding: 10 }}>棚卸前</th>',
+    '                      <th style={{ textAlign: "right", padding: 10 }}>実在庫</th>',
+    '                      <th style={{ textAlign: "right", padding: 10 }}>差異</th>',
+    '                    </tr>',
+    '                  </thead>',
+    '                  <tbody>',
+    '                    {stocktakeHistory.map((history) => {',
+    '                      const product = productMap[history.product_id];',
+    '                      const diff = Number(history.difference || 0);',
+    '                      return (',
+    '                        <tr key={history.id} style={{ borderTop: "1px solid #f1f5f9" }}>',
+    '                          <td style={{ padding: 10, whiteSpace: "nowrap" }}>{new Date(history.created_at).toLocaleString("ja-JP")}</td>',
+    '                          <td style={{ padding: 10, fontWeight: 600 }}>{product?.name ?? "商品不明"}</td>',
+    '                          <td style={{ padding: 10 }}>{product?.jan_code ?? "—"}</td>',
+    '                          <td style={{ padding: 10, textAlign: "right" }}>{history.stock_before}</td>',
+    '                          <td style={{ padding: 10, textAlign: "right" }}>{history.stock_counted}</td>',
+    '                          <td style={{ padding: 10, textAlign: "right", fontWeight: 700, color: diff === 0 ? "#15803d" : diff > 0 ? "#2563eb" : "#dc2626" }}>{diff >= 0 ? "+" : ""}{diff}</td>',
+    '                        </tr>',
+    '                      );',
+    '                    })}',
+    '                  </tbody>',
+    '                </table>',
+    '              </div>',
+    '            )}',
     '          </section>',
     '        )}',
     '',
