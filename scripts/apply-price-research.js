@@ -55,12 +55,14 @@ if (!text.includes("async function researchPrices")) {
 }
 
 if (!text.includes('id="price-research-panel"')) {
-  const marker = '              </form>\n            </section>\n\n            <section style={cardStyle}>\n              <h2>最近の商品';
-  const alternateMarker = '              </form>\n            </section>\n\n            <section style={cardStyle}>\n              <h2>最近の仕入';
-  const ui = join([
-    '              </form>',
+  const sectionMarker = join([
     '            </section>',
     '',
+    '            <section style={cardStyle}>',
+    '              <h2>最近の仕入</h2>',
+  ]);
+
+  const ui = join([
     '            <section id="price-research-panel" style={cardStyle}>',
     '              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>',
     '                <div>',
@@ -71,7 +73,6 @@ if (!text.includes('id="price-research-panel"')) {
     '                  {priceResearchLoading ? "検索中…" : "🔎 価格を調べる"}',
     '                </button>',
     '              </div>',
-    '',
     '              {priceResearch && (',
     '                <div style={{ marginTop: 18, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 15 }}>',
     '                  <div style={{ border: "1px solid #e5e7eb", borderRadius: 14, padding: 16 }}>',
@@ -87,7 +88,6 @@ if (!text.includes('id="price-research-panel"')) {
     '                    {priceResearch.rakuten?.error && !priceResearch.rakuten?.items?.length && <p style={{ color: "#6b7280" }}>{priceResearch.rakuten.error}</p>}',
     '                    <a href={priceResearch.price2alert} target="_blank" rel="noreferrer" style={{ display: "inline-block", marginTop: 10 }}>📈 Price2Alertで価格推移を見る</a>',
     '                  </div>',
-    '',
     '                  <div style={{ border: "1px solid #e5e7eb", borderRadius: 14, padding: 16 }}>',
     '                    <h3 style={{ marginTop: 0 }}>🟠 Amazon</h3>',
     '                    {priceResearch.amazon?.lowestPrice != null ? <div style={{ fontSize: 28, fontWeight: 800 }}>{yen(priceResearch.amazon.lowestPrice)}</div> : <p style={{ color: "#6b7280" }}>Amazonの公式API情報を取得するには認証設定が必要です。</p>}',
@@ -99,11 +99,9 @@ if (!text.includes('id="price-research-panel"')) {
     '            </section>',
     '',
   ]);
-  if (text.includes(alternateMarker)) {
-    text = text.replace(alternateMarker, ui + alternateMarker.slice(0));
-  } else {
-    throw new Error("product/purchase section marker not found");
-  }
+
+  if (!text.includes(sectionMarker)) throw new Error("purchase section marker not found");
+  text = text.replace(sectionMarker, '            </section>\n\n' + ui + '            <section style={cardStyle}>\n              <h2>最近の仕入</h2>');
 }
 
 fs.writeFileSync(file, text, "utf8");
