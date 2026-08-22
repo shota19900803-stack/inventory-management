@@ -17,9 +17,8 @@ const productsStart = productsMatch.index;
 const purchasesStart = purchasesMatch.index;
 let productsBlock = text.slice(productsStart, purchasesStart);
 
-// A previous patch accidentally copied the purchase-registration fields into
-// the product-registration tab. Remove those fields by their unique labels.
-// This is intentionally label-based rather than dependent on exact indentation.
+// A previous patch accidentally copied purchase-registration fields into the
+// product-registration tab. Remove those fields by their unique labels.
 const purchaseLabels = [
   "商品\\*",
   "仕入日",
@@ -37,9 +36,9 @@ for (const label of purchaseLabels) {
   productsBlock = productsBlock.replace(pattern, "");
 }
 
-// Remove the purchase total block that was also copied into the product tab.
+// Remove only the known purchase-total wrapper from the copied form.
 productsBlock = productsBlock.replace(
-  /\\n\\s*<div[\\s\\S]*?仕入合計[\\s\\S]*?<\\/div>/g,
+  /\\n\\s*<div\\s*\\n\\s*style=\\{\\{\\s*\\n\\s*marginTop:\s*15,\\s*\\n\\s*fontSize:\s*18,\\s*\\n\\s*fontWeight:\s*700,\\s*\\n\\s*\\}\\}\\s*\\n\\s*>\\s*仕入合計[\\s\\S]*?<\\/div>/g,
   ""
 );
 
