@@ -54,7 +54,6 @@ if (selectStart === -1 || selectEnd === -1) {
   throw new Error("Purchase product select block was not found.");
 }
 const selectEndExclusive = selectEnd + "                    </select>".length;
-const oldSelect = text.slice(selectStart, selectEndExclusive);
 
 const newSelect = `                    <div>
                       <input
@@ -84,7 +83,7 @@ const newSelect = `                    <div>
                         {filteredPurchaseProducts.map((product) => (
                           <option key={product.id} value={product.id}>
                             {product.name}
-                            {product.jan_code ? `　(${product.jan_code})` : ""}
+                            {product.jan_code ? "　(" + product.jan_code + ")" : ""}
                           </option>
                         ))}
                       </select>
