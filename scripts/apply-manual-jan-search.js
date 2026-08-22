@@ -6,7 +6,6 @@ let text = fs.readFileSync(file, "utf8");
 
 if (!text.includes("async function searchJanManually")) {
   const functionMarker = "const startJanScanner = () => {";
-
   if (!text.includes(functionMarker)) {
     throw new Error("JAN scanner function marker was not found.");
   }
@@ -27,30 +26,33 @@ if (!text.includes("async function searchJanManually")) {
   text = text.replace(functionMarker, helper + functionMarker);
 }
 
-// Replace the entire JAN field with one clean, predictable layout.
-// The previous patch accidentally nested the scanner controls inside a <label>,
-// which made the input collapse to a tiny box and hid the JAN検索 button.
-const janStart = text.indexOf("                  <label>\n  JANコード");
-const janEndMarker = "                  <label>\n                    SKU";
-const janEnd = text.indexOf(janEndMarker, janStart);
+// The JAN JSX may have different indentation depending on which prebuild
+// patches have already run. Locate it structurally instead of relying on
+// exact whitespace.
+const janPattern = /\s*<label>\s*JANコード[\s\S]*?(?=\s*<label>\s*SKU)/;
 
-if (janStart === -1 || janEnd === -1) {
-  throw new Error("JAN input layout block was not found.");
+if (!janPattern.test(text)) {
+  throw new Error("JAN input block could not be located.");
 }
 
-const janBlock = `                  <label>
-                    JANコード
+const janBlock = `
+                  <div>
+                    <label style={{ display: "block", marginBottom: 6 }}>
+                      JANコード
+                    </label>
+
                     <div
                       style={{
                         display: "flex",
                         gap: 10,
                         alignItems: "stretch",
+                        flexWrap: "wrap",
                       }}
                     >
                       <input
                         style={{
                           ...inputStyle,
-                          flex: 1,
+                          flex: "1 1 280px",
                           minWidth: 0,
                         }}
                         inputMode="numeric"
@@ -185,10 +187,9 @@ const janBlock = `                  <label>
                         </div>
                       </div>
                     )}
-                  </label>
+                  </div>
 `;
 
-text = text.slice(0, janStart) + janBlock + text.slice(janEnd);
-
+text = text.replace(janPattern, janBlock);
 fs.writeFileSync(file, text, "utf8");
 console.log("Applied manual JAN search and restored JAN input layout.");
