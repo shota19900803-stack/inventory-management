@@ -7,8 +7,7 @@ let text = fs.readFileSync(file, "utf8");
 const productsMatch = text.match(/\{tab\s*===\s*["']products["']\s*&&\s*\(/);
 const purchasesMatch = text.match(/\{tab\s*===\s*["']purchases["']\s*&&\s*\(/);
 
-// This cleanup must never make production builds fail just because a prior
-// patch changed formatting or the repair is no longer needed.
+// Never fail the production build just because a repair is no longer needed.
 if (!productsMatch || !purchasesMatch || productsMatch.index >= purchasesMatch.index) {
   console.log("Product/purchase tab markers not found; repair skipped.");
   process.exit(0);
@@ -18,21 +17,42 @@ const productsStart = productsMatch.index;
 const purchasesStart = purchasesMatch.index;
 let productsBlock = text.slice(productsStart, purchasesStart);
 
-// Remove the accidentally embedded purchase form from the product tab.
-// The product master has no 商品* selector; the purchase tab does.
-const purchaseStart = productsBlock.search(/<label>\s*商品\*|<label[^>]*>\s*商品\*/);
-const buttonArea = productsBlock.search(/<div\s*\n?\s*style=\{\{\s*display:\s*["']flex["'][\s\S]*?marginTop:\s*20/);
+// A previous patch accidentally copied the purchase-registration fields into
+// the product-registration tab. Remove those fields by their unique labels.
+// This is intentionally label-based rather than dependent on exact indentation.
+const purchaseLabels = [
+  "商品\\*",
+  "仕入日",
+  "仕入先",
+  "仕入単価\\*",
+  "数量\\*",
+  "メモ",
+];
 
-if (purchaseStart !== -1 && buttonArea !== -1 && buttonArea > purchaseStart) {
-  productsBlock = productsBlock.slice(0, purchaseStart) + "\n                </div>\n\n" + productsBlock.slice(buttonArea);
-  console.log("Removed accidental purchase fields from product form.");
+for (const label of purchaseLabels) {
+  const pattern = new RegExp(
+    `\\n\\s*<label>\\s*${label}[\\s\\S]*?<\\/label>`,
+    "g"
+  );
+  productsBlock = productsBlock.replace(pattern, "");
 }
 
-// Product master should not expose manual stock/reference-price inputs.
-productsBlock = productsBlock.replace(/\n\s*<label>\s*\n\s*在庫数[\s\S]*?<\/label>/g, "");
-productsBlock = productsBlock.replace(/\n\s*<label>\s*\n\s*現在の参考仕入価格[\s\S]*?<\/label>/g, "");
-productsBlock = productsBlock.replace(/\n\s*<label>\s*\n\s*現在の参考販売価格[\s\S]*?<\/label>/g, "");
+// Remove the purchase total block that was also copied into the product tab.
+productsBlock = productsBlock.replace(
+  /\\n\\s*<div[\\s\\S]*?仕入合計[\\s\\S]*?<\\/div>/g,
+  ""
+);
+
+// Remove old product-master-only inventory/reference price fields. Actual
+// inventory is maintained by purchase/sales history.
+for (const label of ["在庫数", "現在の参考仕入価格", "現在の参考販売価格"]) {
+  const pattern = new RegExp(
+    `\\n\\s*<label>\\s*${label}[\\s\\S]*?<\\/label>`,
+    "g"
+  );
+  productsBlock = productsBlock.replace(pattern, "");
+}
 
 text = text.slice(0, productsStart) + productsBlock + text.slice(purchasesStart);
 fs.writeFileSync(file, text, "utf8");
-console.log("Product form repair completed safely.");
+console.log("Product form repair completed: purchase fields removed from product tab.");
