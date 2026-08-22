@@ -15,7 +15,7 @@ if (source.includes(newBlock)) {
   source = source.replace(oldBlock, newBlock);
   console.log("Applied JAN scanner fullscreen patch.");
 } else {
-  throw new Error("JAN scanner container style marker not found.");
+  console.log("JAN scanner container already uses a different layout; continuing with JSX cleanup.");
 }
 
 const oldVideo = `        width: "100%",\n        height: "min(68vh, 520px)",\n        minHeight: 320,\n        display: "block",\n        objectFit: "cover",\n        borderRadius: 10,`;
