@@ -49,11 +49,11 @@ const newDeletePurchase = `  async function deletePurchase(purchase: Purchase) {
       setMessage(
         currentStock >= quantity
           ? "仕入を削除しました。在庫も調整しました。"
-          : \`仕入履歴を削除しました。売却・使用済み\${soldOrUsedQuantity}個分は在庫を変更していません。\`
+          : "仕入履歴を削除しました。売却・使用済み" + soldOrUsedQuantity + "個分は在庫を変更していません。"
       );
       await loadAll();
     } catch (error: any) {
-      setMessage(`仕入削除エラー：\${error?.message || String(error)}`);
+      setMessage("仕入削除エラー：" + (error?.message || String(error)));
     }
   }`;
 
@@ -82,7 +82,7 @@ const newDeleteSale = `  async function deleteSale(sale: Sale) {
       setMessage("売上を削除しました。在庫を元に戻しました。");
       await loadAll();
     } catch (error: any) {
-      setMessage(`売上削除エラー：\${error?.message || String(error)}`);
+      setMessage("売上削除エラー：" + (error?.message || String(error)));
     }
   }`;
 
