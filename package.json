@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "prebuild": "node scripts/prepare-build.js && node scripts/apply-purchase-product-search.js",
+    "prebuild": "node scripts/prepare-build.js && node scripts/apply-price-research.js && node scripts/apply-price-research-jan-scanner.js && node scripts/apply-purchase-product-search.js",
     "build": "next build",
     "start": "next start"
   },
