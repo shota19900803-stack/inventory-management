@@ -4,110 +4,65 @@ const path = require("path");
 const file = path.join(process.cwd(), "components", "Dashboard.tsx");
 let text = fs.readFileSync(file, "utf8");
 
-// Build-safe repair: exact string replacements only. Never use a regex here.
-if (text.includes("Product/purchase form cleanup applied")) {
-  console.log("Product/purchase form cleanup already applied.");
+// This repair runs before every production build. Keep it deliberately
+// string-based: regex parsing here previously caused Vercel's
+// "Invalid regular expression" build failure.
+const productsMarker = '{tab === "products" && (';
+const purchasesMarker = '{tab === "purchases" && (';
+
+const productsStart = text.indexOf(productsMarker);
+const purchasesStart = text.indexOf(purchasesMarker, productsStart + productsMarker.length);
+
+if (productsStart === -1 || purchasesStart === -1 || productsStart >= purchasesStart) {
+  console.log("Product/purchase tab markers not found; repair skipped.");
   process.exit(0);
 }
 
-const fieldsToRemove = [
-  `
-                  <label>
-                    在庫数
-                    <input
-                      style={inputStyle}
-                      type="number"
-                      value={
-                        productForm.stock_quantity
-                      }
-                      onChange={(e) =>
-                        setProductForm({
-                          ...productForm,
-                          stock_quantity:
-                            e.target.value,
-                        })
-                      }
-                    />
-                  </label>`,
-  `
-                  <label>
-                    現在の参考仕入価格
-                    <input
-                      style={inputStyle}
-                      type="number"
-                      value={
-                        productForm.cost_price
-                      }
-                      onChange={(e) =>
-                        setProductForm({
-                          ...productForm,
-                          cost_price:
-                            e.target.value,
-                        })
-                      }
-                    />
-                  </label>`,
-  `
-                  <label>
-                    現在の参考販売価格
-                    <input
-                      style={inputStyle}
-                      type="number"
-                      value={
-                        productForm.selling_price
-                      }
-                      onChange={(e) =>
-                        setProductForm({
-                          ...productForm,
-                          selling_price:
-                            e.target.value,
-                        })
-                      }
-                    />
-                  </label>`,
+let productsBlock = text.slice(productsStart, purchasesStart);
+
+function removeLabelBlock(source, labelStart) {
+  const start = source.indexOf(labelStart);
+  if (start === -1) return source;
+
+  const end = source.indexOf("\n                  </label>", start);
+  if (end === -1) return source;
+
+  return source.slice(0, start) + source.slice(end + "\n                  </label>".length);
+}
+
+// A previous patch copied the purchase-registration fields into the product
+// registration form. Remove those fields only from the product tab.
+const purchaseFieldStarts = [
+  "\n                  <label>\n                    商品*\n",
+  "\n                  <label>\n                    仕入日\n",
+  "\n                  <label>\n                    仕入先\n",
+  "\n                  <label>\n                    仕入単価*\n",
+  "\n                  <label>\n                    数量*\n",
+  "\n                  <label>\n                    メモ\n",
 ];
 
-for (const field of fieldsToRemove) {
-  text = text.replace(field, "");
+for (const fieldStart of purchaseFieldStarts) {
+  productsBlock = removeLabelBlock(productsBlock, fieldStart);
 }
 
-// apply-product-form-fix.js runs immediately before this script. If it has
-// already changed the price-save blocks, leave them alone. Otherwise preserve
-// existing values when editing and use zero for new products.
-const oldCost = `      cost_price:
-        productForm.cost_price === ""
-          ? null
-          : Number(productForm.cost_price),`;
-const newCost = `      cost_price:
-        editingProductId
-          ? Number(
-              products.find((product) => product.id === editingProductId)
-                ?.cost_price ?? 0
-            )
-          : 0,`;
+// Remove the copied purchase-total display from the product form.
+const totalStart = productsBlock.indexOf(
+  "\n                <div\n                  style={{\n                    marginTop: 15,\n                    fontSize: 18,\n                    fontWeight: 700,\n                  }}\n                >\n                  仕入合計"
+);
 
-const oldSelling = `      selling_price:
-        productForm.selling_price === ""
-          ? null
-          : Number(productForm.selling_price),`;
-const newSelling = `      selling_price:
-        editingProductId
-          ? Number(
-              products.find((product) => product.id === editingProductId)
-                ?.selling_price ?? 0
-            )
-          : 0,`;
-
-if (text.includes(oldCost)) {
-  text = text.replace(oldCost, newCost);
-}
-if (text.includes(oldSelling)) {
-  text = text.replace(oldSelling, newSelling);
+if (totalStart !== -1) {
+  const totalEnd = productsBlock.indexOf("\n                </div>", totalStart);
+  if (totalEnd !== -1) {
+    productsBlock =
+      productsBlock.slice(0, totalStart) +
+      productsBlock.slice(totalEnd + "\n                </div>".length);
+  }
 }
 
-text += `
-// Product/purchase form cleanup applied
-`;
+text =
+  text.slice(0, productsStart) +
+  productsBlock +
+  text.slice(purchasesStart);
 
 fs.writeFileSync(file, text, "utf8");
-console.log("Product/purchase form cleanup applied: registration form now contains product-master fields only.");
+console.log("Product/purchase form repair completed safely.");
