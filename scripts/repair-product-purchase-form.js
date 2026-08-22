@@ -4,10 +4,7 @@ const path = require("path");
 const file = path.join(process.cwd(), "components", "Dashboard.tsx");
 let text = fs.readFileSync(file, "utf8");
 
-// This script intentionally uses exact string replacements only.
-// Do not use regex here: a previous version broke Vercel with
-// `SyntaxError: Invalid regular expression` while parsing this script.
-
+// Build-safe repair: exact string replacements only. Never use a regex here.
 if (text.includes("Product/purchase form cleanup applied")) {
   console.log("Product/purchase form cleanup already applied.");
   process.exit(0);
@@ -74,9 +71,9 @@ for (const field of fieldsToRemove) {
   text = text.replace(field, "");
 }
 
-// Product registration no longer owns inventory or price values.
-// Preserve existing DB values when editing and use zero for newly-created
-// products so the existing NOT NULL database columns remain compatible.
+// apply-product-form-fix.js runs immediately before this script. If it has
+// already changed the price-save blocks, leave them alone. Otherwise preserve
+// existing values when editing and use zero for new products.
 const oldCost = `      cost_price:
         productForm.cost_price === ""
           ? null
@@ -101,15 +98,12 @@ const newSelling = `      selling_price:
             )
           : 0,`;
 
-if (!text.includes(oldCost)) {
-  throw new Error("Product save cost-price block was not found.");
+if (text.includes(oldCost)) {
+  text = text.replace(oldCost, newCost);
 }
-if (!text.includes(oldSelling)) {
-  throw new Error("Product save selling-price block was not found.");
+if (text.includes(oldSelling)) {
+  text = text.replace(oldSelling, newSelling);
 }
-
-text = text.replace(oldCost, newCost);
-text = text.replace(oldSelling, newSelling);
 
 text += `
 // Product/purchase form cleanup applied
