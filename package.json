@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "prebuild": "node scripts/prepare-build.js && node scripts/apply-purchase-product-search.js && node scripts/apply-shipping-profit.js && node scripts/apply-shipping-rpc.js && node scripts/fix-sale-form-shipping.js",
+    "prebuild": "node scripts/prepare-build.js && node scripts/apply-purchase-product-search.js && node scripts/apply-shipping-profit.js && node scripts/apply-shipping-rpc.js && node scripts/fix-sale-form-shipping.js && node scripts/force-fix-sale-shipping.js",
     "build": "next build",
     "start": "next start"
   },
