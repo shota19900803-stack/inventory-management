@@ -4,14 +4,39 @@ const path = require("path");
 const file = path.join(process.cwd(), "components", "Dashboard.tsx");
 let text = fs.readFileSync(file, "utf8");
 
-const refPattern = /const controlsRef = useRef<any>\(null\);\s*(?:const janLookupRef = useRef\(false\);\s*)?const \[scanning, setScanning\] = useState\(false\);/;
-if (!refPattern.test(text)) throw new Error("JAN scanner reference block was not found.");
+// このスクリプトは prebuild で毎回実行されるため、すでに強化版が
+// 適用済みでもエラーにせず、そのまま次の build 処理へ進める。
+// 以前の参照ブロックが別の修正スクリプトによって書き換えられた場合も同様。
+const hasJanLookup = text.includes("async function lookupProductByJan(");
+const hasJanScanner = text.includes("const startJanScanner = () => {");
+const hasZxingScanner = text.includes("BrowserMultiFormatReader");
 
-text = text.replace(refPattern, `const controlsRef = useRef<any>(null);\nconst janLookupRef = useRef(false);\nconst [scanning, setScanning] = useState(false);`);
+if (hasJanLookup && hasJanScanner && hasZxingScanner) {
+  console.log("JAN scanner/lookup is already applied; skipping duplicate patch.");
+  process.exit(0);
+}
+
+const refPattern = /const controlsRef = useRef<any>\(null\);\s*(?:const janLookupRef = useRef\(false\);\s*)?const \[scanning, setScanning\] = useState\(false\);/;
+
+if (!refPattern.test(text)) {
+  // 旧コードでも新コードでもない場合は、ここで build を壊すより
+  // 明示的にスキップして既存の JAN 読み取り機能を温存する。
+  console.warn("JAN scanner reference block was not found; skipping JAN lookup patch.");
+  process.exit(0);
+}
+
+text = text.replace(
+  refPattern,
+  `const controlsRef = useRef<any>(null);\nconst janLookupRef = useRef(false);\nconst [scanning, setScanning] = useState(false);`
+);
 
 const start = text.indexOf("const startJanScanner = () => {");
 const end = text.indexOf("  const monthSales = useMemo", start);
-if (start === -1 || end === -1) throw new Error("JAN scanner block was not found.");
+
+if (start === -1 || end === -1) {
+  console.warn("JAN scanner block was not found; skipping JAN lookup patch.");
+  process.exit(0);
+}
 
 const newBlock = `function isValidJan13(value: string) {
   if (!/^\\d{13}$/.test(value)) return false;
@@ -105,7 +130,7 @@ useEffect(() => {
         return;
       }
 
-      const reader = new BrowserMultiFormatReader(undefined, 250);
+      const reader = new BrowserMultiFormatReader();
       scannerRef.current = reader;
       const video = videoRef.current;
       video.setAttribute("autoplay", "true");
@@ -178,4 +203,4 @@ useEffect(() => {
 
 text = text.slice(0, start) + newBlock + text.slice(end);
 fs.writeFileSync(file, text, "utf8");
-console.log("Applied stronger JAN scanner patch with lookup support.");
+console.log("Applied stronger JAN scanner with lookup support.");
