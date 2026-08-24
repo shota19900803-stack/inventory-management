@@ -105,6 +105,8 @@ useEffect(() => {
         return;
       }
 
+      // @zxing/browser v0.2.x は第2引数のdelay/optionsを受け付けないため、
+      // コンストラクタは引数なしで生成する。検出の重複抑制は下のロジックで行う。
       const reader = new BrowserMultiFormatReader();
       scannerRef.current = reader;
       const video = videoRef.current;
