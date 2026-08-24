@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "prebuild": "node scripts/prepare-build.js && node scripts/apply-purchase-product-search.js && node scripts/apply-jan-lookup.js && node scripts/fix-jan-reader-constructor.js && node scripts/apply-shipping-profit.js && node scripts/apply-shipping-rpc.js && node scripts/fix-sale-form-shipping.js && node scripts/force-fix-sale-shipping.js && node scripts/fix-product-cost-default.js && node scripts/fix-product-selling-price-default.js && node scripts/apply-sale-product-search.js && node scripts/fix-sale-stock-refresh.js && node scripts/fix-mobile-zxing.js && node scripts/hide-low-stock-mobile.js",
+    "prebuild": "node scripts/prepare-build.js && node scripts/apply-purchase-product-search.js && node scripts/apply-jan-lookup.js && node scripts/fix-jan-reader-constructor.js && node scripts/apply-shipping-profit.js && node scripts/apply-shipping-rpc.js && node scripts/fix-sale-form-shipping.js && node scripts/force-fix-sale-shipping.js && node scripts/fix-product-cost-default.js && node scripts/fix-product-selling-price-default.js && node scripts/apply-sale-product-search.js && node scripts/fix-sale-stock-refresh.js && node scripts/fix-mobile-zxing.js && node scripts/hide-low-stock-mobile.js && node scripts/fix-jan-existing-purchase-flow.js && node scripts/fix-jan-camera-ui.js",
     "build": "next build",
     "start": "next start"
   },
