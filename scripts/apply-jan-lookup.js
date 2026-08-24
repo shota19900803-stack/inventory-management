@@ -105,7 +105,7 @@ useEffect(() => {
         return;
       }
 
-      const reader = new BrowserMultiFormatReader(undefined, 250);
+      const reader = new BrowserMultiFormatReader();
       scannerRef.current = reader;
       const video = videoRef.current;
       video.setAttribute("autoplay", "true");
