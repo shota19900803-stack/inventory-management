@@ -33,6 +33,95 @@ const newBlock = `function isValidJan13(value: string) {
   return (10 - (check % 10)) % 10 === digits[12];
 }
 
+async function lookupProductByJan(jan: string) {
+  if (janLookupRef.current) return;
+
+  janLookupRef.current = true;
+  setMessage("");
+  setScannerMessage("商品情報を検索しています…");
+
+  try {
+    const localProduct = products.find(
+      (product) =>
+        String(product.jan_code ?? "").replace(/\\D/g, "") === jan
+    );
+
+    if (localProduct) {
+      setEditingProductId(localProduct.id);
+      setProductForm({
+        name: localProduct.name ?? "",
+        jan_code: localProduct.jan_code ?? jan,
+        sku: localProduct.sku ?? "",
+        model_number: localProduct.model_number ?? "",
+        brand: localProduct.brand ?? "",
+        category: localProduct.category ?? "",
+        stock_quantity: String(localProduct.stock_quantity ?? 0),
+        cost_price:
+          localProduct.cost_price == null
+            ? ""
+            : String(localProduct.cost_price),
+        selling_price:
+          localProduct.selling_price == null
+            ? ""
+            : String(localProduct.selling_price),
+      });
+      setMessage("登録済みの商品を読み込みました。");
+      setScannerMessage(`読み取り成功：${jan}（登録済み商品）`);
+      return;
+    }
+
+    const response = await fetch(
+      `/api/jan-search?jan=${encodeURIComponent(jan)}`,
+      { cache: "no-store" }
+    );
+    const data = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      throw new Error(data?.error || "JAN商品検索に失敗しました。");
+    }
+
+    setEditingProductId(null);
+    setProductForm((prev) => ({
+      ...prev,
+      jan_code: jan,
+      ...(data?.found && data.product
+        ? {
+            name: data.product.name ?? prev.name,
+            model_number:
+              data.product.model_number ?? prev.model_number,
+            brand: data.product.brand ?? prev.brand,
+            category: data.product.category ?? prev.category,
+          }
+        : {}),
+    }));
+
+    if (data?.found && data.product) {
+      setMessage(
+        `商品情報を自動取得しました（${data.product.source}）。`
+      );
+      setScannerMessage(`商品情報取得成功：${jan}`);
+    } else {
+      setMessage(
+        "JANは読み取れましたが、商品情報を取得できませんでした。商品名を入力してください。"
+      );
+      setScannerMessage(`JAN読み取り成功：${jan}`);
+    }
+  } catch (error) {
+    console.error("JAN商品情報取得エラー:", error);
+    setEditingProductId(null);
+    setProductForm((prev) => ({
+      ...prev,
+      jan_code: jan,
+    }));
+    setMessage(
+      "JANは読み取れましたが、商品情報の取得に失敗しました。"
+    );
+    setScannerMessage(`JAN読み取り成功：${jan}`);
+  } finally {
+    janLookupRef.current = false;
+  }
+}
+
 const startJanScanner = () => {
   setScannerMessage("カメラを起動しています…");
   setScanning(true);
@@ -119,7 +208,7 @@ useEffect(() => {
             ...prev,
             jan_code: raw,
           }));
-          setScannerMessage(\`読み取り成功：\${raw}\`);
+          setScannerMessage(`読み取り成功：${raw}`);
 
           window.setTimeout(() => {
             if (!cancelled) setScanning(false);
@@ -145,7 +234,7 @@ useEffect(() => {
       if (!cancelled) {
         setScannerMessage("カメラを起動できませんでした。");
         alert(
-          "カメラを起動できませんでした。\\n\\n" +
+          "カメラを起動できませんでした。\n\n" +
           "Safariのカメラ使用許可を確認して、もう一度お試しください。"
         );
         setScanning(false);
@@ -175,4 +264,4 @@ useEffect(() => {
 
 text = text.slice(0, start) + newBlock + text.slice(end);
 fs.writeFileSync(file, text, "utf8");
-console.log("Applied stronger JAN scanner patch.");
+console.log("Applied stronger JAN scanner patch with manual JAN lookup support.");
