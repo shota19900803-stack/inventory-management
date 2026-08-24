@@ -1,50 +1,11 @@
-import { useEffect } from "react";
 import Dashboard from "../components/Dashboard";
+import HistoryEditor from "../components/HistoryEditor";
 
 export default function Home() {
-  useEffect(() => {
-    const hideLowStockPanel = () => {
-      const candidates = Array.from(document.querySelectorAll("body *"));
-      const heading = candidates.find((element) =>
-        (element.textContent || "").trim().includes("在庫不足商品") &&
-        element.children.length === 0
-      );
-
-      if (!heading) return;
-
-      let current = heading.parentElement;
-
-      for (let depth = 0; current && depth < 8; depth += 1) {
-        const rect = current.getBoundingClientRect();
-        const style = window.getComputedStyle(current);
-        const hasCardStyle =
-          style.borderRadius !== "0px" ||
-          style.borderTopWidth !== "0px" ||
-          style.boxShadow !== "none";
-
-        if (rect.width >= 220 && rect.height >= 120 && hasCardStyle) {
-          current.style.display = "none";
-          return;
-        }
-
-        current = current.parentElement;
-      }
-    };
-
-    hideLowStockPanel();
-
-    const observer = new MutationObserver(hideLowStockPanel);
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true,
-    });
-
-    return () => observer.disconnect();
-  }, []);
-
   return (
     <>
       <Dashboard />
+      <HistoryEditor />
       <style jsx global>{`
         /* 在庫不足の常時警告は、トレンド商品の運用では情報量が多くなるため非表示 */
         main > div > section:nth-of-type(2) > div:nth-of-type(5),
