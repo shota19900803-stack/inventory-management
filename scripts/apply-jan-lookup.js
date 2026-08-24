@@ -4,9 +4,7 @@ const path = require("path");
 const file = path.join(process.cwd(), "components", "Dashboard.tsx");
 let text = fs.readFileSync(file, "utf8");
 
-// このスクリプトは prebuild で毎回実行されるため、すでに強化版が
-// 適用済みでもエラーにせず、そのまま次の build 処理へ進める。
-// 以前の参照ブロックが別の修正スクリプトによって書き換えられた場合も同様。
+// prebuildで毎回実行されるため、JAN強化済みなら再適用しない。
 const hasJanLookup = text.includes("async function lookupProductByJan(");
 const hasJanScanner = text.includes("const startJanScanner = () => {");
 const hasZxingScanner = text.includes("BrowserMultiFormatReader");
@@ -19,8 +17,6 @@ if (hasJanLookup && hasJanScanner && hasZxingScanner) {
 const refPattern = /const controlsRef = useRef<any>\(null\);\s*(?:const janLookupRef = useRef\(false\);\s*)?const \[scanning, setScanning\] = useState\(false\);/;
 
 if (!refPattern.test(text)) {
-  // 旧コードでも新コードでもない場合は、ここで build を壊すより
-  // 明示的にスキップして既存の JAN 読み取り機能を温存する。
   console.warn("JAN scanner reference block was not found; skipping JAN lookup patch.");
   process.exit(0);
 }
@@ -50,9 +46,19 @@ async function lookupProductByJan(jan: string) {
   janLookupRef.current = true;
   setMessage("");
   setScannerMessage("商品情報を検索しています…");
+
   try {
-    const localProduct = products.find((product) => String(product.jan_code ?? "").replace(/\\D/g, "") === jan);
+    // まず自社の商品マスターを検索。
+    const localProduct = products.find(
+      (product) => String(product.jan_code ?? "").replace(/\\D/g, "") === jan
+    );
+
     if (localProduct) {
+      const stock = Number(localProduct.stock_quantity ?? 0);
+      const cost = localProduct.cost_price == null ? "" : String(localProduct.cost_price);
+      const selling = localProduct.selling_price == null ? "" : String(localProduct.selling_price);
+
+      // 既存商品なら商品情報を完全自動セット。
       setEditingProductId(localProduct.id);
       setProductForm({
         name: localProduct.name ?? "",
@@ -61,16 +67,33 @@ async function lookupProductByJan(jan: string) {
         model_number: localProduct.model_number ?? "",
         brand: localProduct.brand ?? "",
         category: localProduct.category ?? "",
-        stock_quantity: String(localProduct.stock_quantity ?? 0),
-        cost_price: localProduct.cost_price == null ? "" : String(localProduct.cost_price),
-        selling_price: localProduct.selling_price == null ? "" : String(localProduct.selling_price),
+        stock_quantity: String(stock),
+        cost_price: cost,
+        selling_price: selling,
       });
-      setMessage("登録済みの商品を読み込みました。");
+
+      // 次回の仕入登録でも、この商品を自動選択できるようにしておく。
+      setPurchaseForm((prev) => ({
+        ...prev,
+        product_id: localProduct.id,
+        unit_cost: cost || prev.unit_cost,
+        quantity: prev.quantity || "1",
+      }));
+
+      setMessage(
+        "登録済み商品：" + localProduct.name +
+        " ／ 現在庫 " + stock + "個" +
+        (cost ? " ／ 仕入参考 " + yen(Number(cost)) : "") +
+        (selling ? " ／ 販売参考 " + yen(Number(selling)) : "")
+      );
       setScannerMessage("読み取り成功：" + jan + "（登録済み商品）");
       return;
     }
 
-    const response = await fetch("/api/jan-search?jan=" + encodeURIComponent(jan), { cache: "no-store" });
+    // 未登録ならJAN検索APIから商品情報を取得。
+    const response = await fetch("/api/jan-search?jan=" + encodeURIComponent(jan), {
+      cache: "no-store",
+    });
     const data = await response.json().catch(() => null);
     if (!response.ok) throw new Error(data?.error || "JAN商品検索に失敗しました。");
 
@@ -78,25 +101,42 @@ async function lookupProductByJan(jan: string) {
     setProductForm((prev) => ({
       ...prev,
       jan_code: jan,
-      ...(data?.found && data.product ? {
-        name: data.product.name ?? prev.name,
-        model_number: data.product.model_number ?? prev.model_number,
-        brand: data.product.brand ?? prev.brand,
-        category: data.product.category ?? prev.category,
-      } : {}),
+      stock_quantity: "0",
+      ...(data?.found && data.product
+        ? {
+            name: data.product.name ?? prev.name,
+            model_number: data.product.model_number ?? prev.model_number,
+            brand: data.product.brand ?? prev.brand,
+            category: data.product.category ?? prev.category,
+          }
+        : {}),
+    }));
+
+    setPurchaseForm((prev) => ({
+      ...prev,
+      product_id: "",
     }));
 
     if (data?.found && data.product) {
-      setMessage("商品情報を自動取得しました（" + data.product.source + "）。");
+      setMessage(
+        "新規商品候補を取得しました。商品名・メーカー等を確認して登録してください。"
+      );
       setScannerMessage("商品情報取得成功：" + jan);
     } else {
-      setMessage("JANは読み取れましたが、商品情報を取得できませんでした。商品名を入力してください。");
+      setMessage(
+        "JANは読み取れましたが、商品情報を取得できませんでした。商品名を入力してください。"
+      );
       setScannerMessage("JAN読み取り成功：" + jan);
     }
   } catch (error) {
     console.error("JAN商品情報取得エラー:", error);
     setEditingProductId(null);
-    setProductForm((prev) => ({ ...prev, jan_code: jan }));
+    setProductForm((prev) => ({
+      ...prev,
+      jan_code: jan,
+      stock_quantity: "0",
+    }));
+    setPurchaseForm((prev) => ({ ...prev, product_id: "" }));
     setMessage("JANは読み取れましたが、商品情報の取得に失敗しました。");
     setScannerMessage("JAN読み取り成功：" + jan);
   } finally {
@@ -140,41 +180,47 @@ useEffect(() => {
       video.playsInline = true;
       setScannerMessage("JANコードを枠の中に入れてください");
 
-      const controls = await reader.decodeFromConstraints({
-        audio: false,
-        video: {
-          facingMode: { ideal: "environment" },
-          width: { ideal: 1280, min: 640 },
-          height: { ideal: 720, min: 480 },
-          frameRate: { ideal: 30, min: 15 },
+      const controls = await reader.decodeFromConstraints(
+        {
+          audio: false,
+          video: {
+            facingMode: { ideal: "environment" },
+            width: { ideal: 1280, min: 640 },
+            height: { ideal: 720, min: 480 },
+            frameRate: { ideal: 30, min: 15 },
+          },
         },
-      }, video, (result, error) => {
-        if (cancelled || janLookupRef.current || !result) {
-          if (error) console.log("スキャン中:", error);
-          return;
+        video,
+        (result, error) => {
+          if (cancelled || janLookupRef.current || !result) {
+            if (error) console.log("スキャン中:", error);
+            return;
+          }
+
+          const raw = result.getText().replace(/\\D/g, "");
+          const now = Date.now();
+          if (raw.length !== 13 || !isValidJan13(raw)) return;
+          if (raw === lastDetected && now - lastDetectedAt < 1500) return;
+
+          lastDetected = raw;
+          lastDetectedAt = now;
+          console.log("JANコード検出:", raw);
+
+          try { controlsRef.current?.stop(); } catch {}
+          controlsRef.current = null;
+          scannerRef.current = null;
+          setProductForm((prev) => ({ ...prev, jan_code: raw }));
+          setScannerMessage("読み取り成功：" + raw);
+          setScanning(false);
+          void lookupProductByJan(raw);
         }
-
-        const raw = result.getText().replace(/\\D/g, "");
-        const now = Date.now();
-        if (raw.length !== 13 || !isValidJan13(raw)) return;
-        if (raw === lastDetected && now - lastDetectedAt < 1500) return;
-        lastDetected = raw;
-        lastDetectedAt = now;
-        console.log("JANコード検出:", raw);
-
-        try { controlsRef.current?.stop(); } catch {}
-        controlsRef.current = null;
-        scannerRef.current = null;
-        setProductForm((prev) => ({ ...prev, jan_code: raw }));
-        setScannerMessage("読み取り成功：" + raw);
-        setScanning(false);
-        void lookupProductByJan(raw);
-      });
+      );
 
       if (cancelled) {
         controls.stop();
         return;
       }
+
       controlsRef.current = controls;
       try { await video.play(); } catch (playError) { console.log("video.play待機:", playError); }
     } catch (error) {
@@ -203,4 +249,4 @@ useEffect(() => {
 
 text = text.slice(0, start) + newBlock + text.slice(end);
 fs.writeFileSync(file, text, "utf8");
-console.log("Applied stronger JAN scanner with lookup support.");
+console.log("Applied enhanced JAN lookup: stock/cost/selling info + purchase preselection.");
