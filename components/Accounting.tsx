@@ -432,24 +432,34 @@ export default function Accounting() {
 
         <section style={card}>
           <h2 style={{ marginTop: 0 }}>📚 帳簿・取引一覧</h2>
-          <p style={{ color: "#6b7280" }}>売上・仕入・経費を日付順にまとめています。</p>
+          <p style={{ color: "#6b7280" }}>売上・仕入・経費を日付順にまとめています。経費はこの一覧から直接編集・削除できます。</p>
           <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 820 }}>
-              <thead><tr>{["日付", "区分", "内容", "相手先", "売上", "支出", "利益"].map((h) => <th key={h} style={{ padding: 10, textAlign: h === "売上" || h === "支出" || h === "利益" ? "right" : "left", borderBottom: "1px solid #e5e7eb" }}>{h}</th>)}</tr></thead>
+            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 980 }}>
+              <thead><tr>{["日付", "区分", "内容", "相手先", "売上", "支出", "利益", "操作"].map((h) => <th key={h} style={{ padding: 10, textAlign: h === "売上" || h === "支出" || h === "利益" ? "right" : h === "操作" ? "center" : "left", borderBottom: "1px solid #e5e7eb", whiteSpace: "nowrap" }}>{h}</th>)}</tr></thead>
               <tbody>
                 {[
-                  ...monthSales.map((sale) => ({ date: sale.sale_date, type: "売上", description: productMap[sale.product_id] || "商品不明", counterparty: sale.sales_channel || "", income: Number(sale.total_sales || 0), expense: Number(sale.total_cost || 0) + Number(sale.shipping_cost || 0), profit: Number(sale.gross_profit || 0) - Number(sale.shipping_cost || 0), id: `s-${sale.id}` })),
-                  ...monthPurchases.map((purchase) => ({ date: purchase.purchase_date, type: "仕入", description: productMap[purchase.product_id] || "商品不明", counterparty: purchase.supplier || "", income: 0, expense: Number(purchase.total_cost || 0), profit: 0, id: `p-${purchase.id}` })),
-                  ...monthExpenses.map((expense) => ({ date: expense.entry_date, type: expense.category, description: expense.description, counterparty: expense.vendor || expense.payment_method || "", income: 0, expense: Number(expense.amount || 0), profit: -Number(expense.amount || 0), id: `e-${expense.id}` })),
+                  ...monthSales.map((sale) => ({ date: sale.sale_date, type: "売上", description: productMap[sale.product_id] || "商品不明", counterparty: sale.sales_channel || "", income: Number(sale.total_sales || 0), expense: Number(sale.total_cost || 0) + Number(sale.shipping_cost || 0), profit: Number(sale.gross_profit || 0) - Number(sale.shipping_cost || 0), id: `s-${sale.id}`, kind: "sale" as const, source: sale })),
+                  ...monthPurchases.map((purchase) => ({ date: purchase.purchase_date, type: "仕入", description: productMap[purchase.product_id] || "商品不明", counterparty: purchase.supplier || "", income: 0, expense: Number(purchase.total_cost || 0), profit: 0, id: `p-${purchase.id}`, kind: "purchase" as const, source: purchase })),
+                  ...monthExpenses.map((expense) => ({ date: expense.entry_date, type: expense.category, description: expense.description, counterparty: expense.vendor || expense.payment_method || "", income: 0, expense: Number(expense.amount || 0), profit: -Number(expense.amount || 0), id: `e-${expense.id}`, kind: "expense" as const, source: expense })),
                 ].sort((a, b) => b.date.localeCompare(a.date)).map((row) => (
                   <tr key={row.id}>
-                    <td style={{ padding: 10, borderBottom: "1px solid #f1f5f9" }}>{row.date}</td>
-                    <td style={{ padding: 10, borderBottom: "1px solid #f1f5f9", fontWeight: 700 }}>{row.type}</td>
+                    <td style={{ padding: 10, borderBottom: "1px solid #f1f5f9", whiteSpace: "nowrap" }}>{row.date}</td>
+                    <td style={{ padding: 10, borderBottom: "1px solid #f1f5f9", fontWeight: 700, whiteSpace: "nowrap" }}>{row.type}</td>
                     <td style={{ padding: 10, borderBottom: "1px solid #f1f5f9" }}>{row.description}</td>
                     <td style={{ padding: 10, borderBottom: "1px solid #f1f5f9" }}>{row.counterparty || "—"}</td>
-                    <td style={{ padding: 10, textAlign: "right", borderBottom: "1px solid #f1f5f9" }}>{row.income ? yen(row.income) : "—"}</td>
-                    <td style={{ padding: 10, textAlign: "right", borderBottom: "1px solid #f1f5f9" }}>{row.expense ? yen(row.expense) : "—"}</td>
-                    <td style={{ padding: 10, textAlign: "right", borderBottom: "1px solid #f1f5f9", fontWeight: 700, color: row.profit >= 0 ? "#15803d" : "#dc2626" }}>{row.profit ? yen(row.profit) : "—"}</td>
+                    <td style={{ padding: 10, textAlign: "right", borderBottom: "1px solid #f1f5f9", whiteSpace: "nowrap" }}>{row.income ? yen(row.income) : "—"}</td>
+                    <td style={{ padding: 10, textAlign: "right", borderBottom: "1px solid #f1f5f9", whiteSpace: "nowrap" }}>{row.expense ? yen(row.expense) : "—"}</td>
+                    <td style={{ padding: 10, textAlign: "right", borderBottom: "1px solid #f1f5f9", fontWeight: 700, color: row.profit >= 0 ? "#15803d" : "#dc2626", whiteSpace: "nowrap" }}>{row.profit ? yen(row.profit) : "—"}</td>
+                    <td style={{ padding: 10, textAlign: "center", borderBottom: "1px solid #f1f5f9", whiteSpace: "nowrap" }}>
+                      {row.kind === "expense" ? (
+                        <div style={{ display: "flex", gap: 6, justifyContent: "center", flexWrap: "wrap" }}>
+                          <button type="button" disabled={saving} onClick={() => startEditExpense(row.source as Expense)} style={{ border: "1px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8", padding: "6px 9px", borderRadius: 8, fontWeight: 700, cursor: "pointer" }}>編集</button>
+                          <button type="button" disabled={saving} onClick={() => deleteExpense((row.source as Expense).id)} style={{ border: "1px solid #fecaca", background: "#fff5f5", color: "#b42318", padding: "6px 9px", borderRadius: 8, fontWeight: 700, cursor: "pointer" }}>削除</button>
+                        </div>
+                      ) : (
+                        <span style={{ color: "#9ca3af", fontSize: 12 }}>在庫連動あり</span>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
