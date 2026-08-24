@@ -5,7 +5,8 @@ const file = path.join(process.cwd(), "components", "Dashboard.tsx");
 let text = fs.readFileSync(file, "utf8");
 
 // Add a searchable product picker to the purchase-registration form.
-// This script is intentionally idempotent so repeated Vercel builds are safe.
+// This script is intentionally idempotent and safe for deployments where
+// the purchase form has already been normalized or temporarily paused.
 if (text.includes("// Applied purchase product search.")) {
   console.log("Purchase product search already applied.");
   process.exit(0);
@@ -13,7 +14,10 @@ if (text.includes("// Applied purchase product search.")) {
 
 const stateMarker = '  const [historyProductId, setHistoryProductId] = useState("");';
 if (!text.includes(stateMarker)) {
-  throw new Error("Purchase search state insertion marker was not found.");
+  console.log(
+    "Purchase search state insertion marker was not found; skipping purchase product search patch."
+  );
+  process.exit(0);
 }
 
 const stateBlock = `  const [purchaseProductSearch, setPurchaseProductSearch] = useState("");
@@ -43,17 +47,28 @@ ${stateMarker}`;
 text = text.replace(stateMarker, stateBlock);
 
 const productLabelMarker = `                  <label>\n                    商品*\n                    <select`;
-const start = text.indexOf(productLabelMarker, text.indexOf('{tab === "purchases" && ('));
+const start = text.indexOf(
+  productLabelMarker,
+  text.indexOf('{tab === "purchases" && (')
+);
 if (start === -1) {
-  throw new Error("Purchase product select marker was not found.");
+  console.log(
+    "Purchase product select marker was not found; skipping purchase product search patch."
+  );
+  process.exit(0);
 }
 
 const selectStart = text.indexOf("                    <select", start);
 const selectEnd = text.indexOf("                    </select>", selectStart);
 if (selectStart === -1 || selectEnd === -1) {
-  throw new Error("Purchase product select block was not found.");
+  console.log(
+    "Purchase product select block was not found; skipping purchase product search patch."
+  );
+  process.exit(0);
 }
-const selectEndExclusive = selectEnd + "                    </select>".length;
+
+const selectEndExclusive =
+  selectEnd + "                    </select>".length;
 
 const newSelect = `                    <div>
                       <input
@@ -83,7 +98,9 @@ const newSelect = `                    <div>
                         {filteredPurchaseProducts.map((product) => (
                           <option key={product.id} value={product.id}>
                             {product.name}
-                            {product.jan_code ? "　(" + product.jan_code + ")" : ""}
+                            {product.jan_code
+                              ? "　(" + product.jan_code + ")"
+                              : ""}
                           </option>
                         ))}
                       </select>
@@ -99,7 +116,10 @@ const newSelect = `                    <div>
                       </div>
                     </div>`;
 
-text = text.slice(0, selectStart) + newSelect + text.slice(selectEndExclusive);
+text =
+  text.slice(0, selectStart) +
+  newSelect +
+  text.slice(selectEndExclusive);
 
 text += `\n// Applied purchase product search.\n`;
 fs.writeFileSync(file, text, "utf8");
