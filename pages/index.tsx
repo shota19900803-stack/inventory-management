@@ -51,11 +51,57 @@ export default function Home() {
   const [desktopEnhancers, setDesktopEnhancers] = useState(false);
 
   useEffect(() => {
-    // HistoryEditor / SalesActionsRpc は既存画面を MutationObserver で監視する
-    // 補助機能なので、iPhoneでは最初から起動しない。これによりSafariで
-    // 大量のDOM監視が走ってDashboardが落ちる問題を防ぐ。
     const mobile = window.matchMedia("(max-width: 767px)").matches;
     setDesktopEnhancers(!mobile);
+
+    // iPhone版では「在庫不足商品」カードを表示しない。
+    // PC版の既存表示には影響させない。
+    if (!mobile) return;
+
+    let stopped = false;
+    let observer: MutationObserver | null = null;
+
+    const hideLowStockCard = () => {
+      if (stopped) return true;
+
+      const main = document.querySelector("main");
+      if (!main) return false;
+
+      const leaves = Array.from(main.querySelectorAll("*"));
+      for (const leaf of leaves) {
+        if (leaf.children.length !== 0) continue;
+
+        const leafText = (leaf.textContent || "").replace(/\\s/g, "");
+        if (!leafText.includes("在庫不足商品")) continue;
+
+        let node: HTMLElement | null = leaf.parentElement;
+        for (let depth = 0; node && depth < 12; depth += 1) {
+          const text = (node.textContent || "").replace(/\\s/g, "");
+          if (text.includes("在庫管理") && /\\d+件/.test(text)) {
+            node.style.display = "none";
+            node.setAttribute("data-mobile-low-stock-hidden", "true");
+            return true;
+          }
+          node = node.parentElement;
+        }
+      }
+
+      return false;
+    };
+
+    const run = () => hideLowStockCard();
+    run();
+
+    const timer = window.setInterval(run, 700);
+    observer = new MutationObserver(run);
+    const root = document.querySelector("main") || document.body;
+    observer.observe(root, { childList: true, subtree: true });
+
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+      observer?.disconnect();
+    };
   }, []);
 
   return (
