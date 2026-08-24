@@ -4,72 +4,21 @@ const path = require("path");
 const file = path.join(process.cwd(), "components", "Dashboard.tsx");
 let text = fs.readFileSync(file, "utf8");
 
-// JANカメラは「映像だけ大きくする」のではなく、
-// スマホ上でカメラの親コンテナも横幅いっぱいに広げる。
-// 既存のZXing読み取り処理は変更しない。
+// JANカメラの表示だけを改善するパッチ。
+// ZXingの読み取り処理そのものには触れない。
+const marker = "  const monthSales = useMemo(() => {";
 
-const cameraLayoutEffect = `
-  // JANカメラをスマホ幅いっぱいで使いやすくする。
-  // 現在のUIがPC向けの横並びレイアウトでも、カメラ起動時だけ縦並びに直す。
-  useEffect(() => {
-    if (!scanning) return;
+const effect = `  // JANカメラ起動時に、カメラ表示をスマホ幅いっぱいに整える。\n  useEffect(() => {\n    if (!scanning) return;\n\n    const timer = window.setTimeout(() => {\n      const video = videoRef.current;\n      if (!video) return;\n\n      video.style.width = "100%";\n      video.style.maxWidth = "none";\n      video.style.height = "min(72vh, 680px)";\n      video.style.minHeight = "45vh";\n      video.style.display = "block";\n      video.style.objectFit = "contain";\n      video.style.margin = "0";\n      video.style.background = "#111";\n      video.style.borderRadius = "12px";\n\n      let node = video.parentElement;\n      for (let i = 0; node && i < 6; i += 1) {\n        const computed = window.getComputedStyle(node);\n        if (computed.display === "flex") {\n          node.style.flexDirection = "column";\n          node.style.alignItems = "stretch";\n          node.style.justifyContent = "center";\n          node.style.width = "calc(100vw - 24px)";\n          node.style.maxWidth = "720px";\n          node.style.marginLeft = "auto";\n          node.style.marginRight = "auto";\n          node.style.boxSizing = "border-box";\n          node.style.gap = "10px";\n          break;\n        }\n        node = node.parentElement;\n      }\n\n      const parent = video.parentElement;\n      if (parent) {\n        parent.style.width = "100%";\n        parent.style.maxWidth = "none";\n        parent.style.boxSizing = "border-box";\n      }\n    }, 50);\n\n    return () => window.clearTimeout(timer);\n  }, [scanning]);\n\n`;
 
-    const timer = window.setTimeout(() => {
-      const video = videoRef.current;
-      if (!video) return;
-
-      video.style.width = "100%";
-      video.style.maxWidth = "none";
-      video.style.height = "min(72vh, 680px)";
-      video.style.minHeight = "45vh";
-      video.style.display = "block";
-      video.style.objectFit = "contain";
-      video.style.margin = "0";
-      video.style.background = "#111";
-      video.style.borderRadius = "12px";
-
-      const videoParent = video.parentElement;
-      if (videoParent) {
-        videoParent.style.width = "100%";
-        videoParent.style.maxWidth = "none";
-        videoParent.style.boxSizing = "border-box";
-      }
-
-      // videoから上へたどり、カメラ部分を横並びにしている親を探す。
-      // 見つかった親を縦並び＋スマホ幅に変更することで、
-      // 「左側に大きな空白、右側だけカメラ」という状態を解消する。
-      let node: HTMLElement | null = video.parentElement;
-      for (let i = 0; node && i < 6; i += 1) {
-        const computed = window.getComputedStyle(node);
-        if (computed.display === "flex" && computed.flexDirection !== "column") {
-          node.style.flexDirection = "column";
-          node.style.alignItems = "stretch";
-          node.style.justifyContent = "center";
-          node.style.width = "calc(100vw - 24px)";
-          node.style.maxWidth = "720px";
-          node.style.marginLeft = "auto";
-          node.style.marginRight = "auto";
-          node.style.boxSizing = "border-box";
-          node.style.gap = "10px";
-          break;
-        }
-        node = node.parentElement;
-      }
-    }, 50);
-
-    return () => window.clearTimeout(timer);
-  }, [scanning]);
-`;
-
-if (!text.includes("// JANカメラをスマホ幅いっぱいで使いやすくする。")) {
-  const marker = "useEffect(() => {\n  if (!scanning) {";
-  if (!text.includes(marker)) {
-    throw new Error("JAN scanner effect marker not found.");
+if (!text.includes("// JANカメラ起動時に、カメラ表示をスマホ幅いっぱいに整える。")) {
+  const index = text.indexOf(marker);
+  if (index === -1) {
+    throw new Error("JAN camera UI insertion marker not found.");
   }
-  text = text.replace(marker, cameraLayoutEffect + "\n" + marker);
+  text = text.slice(0, index) + effect + text.slice(index);
 }
 
-// 既存のvideoスタイルも見つかる場合は、高さだけ確実に拡大する。
+// JSX側に既存のvideoスタイルがある場合も、大きさを確実に上書きする。
 text = text.replace(
   /style=\{\{\s*width: "100%",\s*display: "block",\s*borderRadius: 8,\s*\}\}/,
   `style={{
