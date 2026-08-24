@@ -47,15 +47,23 @@ export default function SalesActionsRpc() {
     };
 
     const hideLowStock = () => {
-      const leaves = Array.from(document.querySelectorAll("body *")).filter(
-        (el) => el.children.length === 0 && clean(el.textContent || "") === "在庫不足商品"
-      );
+      // 「⚠️ 在庫不足商品」のようにアイコン等が付く場合も拾う。
+      const leaves = Array.from(document.querySelectorAll("body *")).filter((el) => {
+        if (el.children.length !== 0) return false;
+        const text = clean(el.textContent || "");
+        return text.includes("在庫不足商品");
+      });
+
       leaves.forEach((leaf) => {
         let node = leaf as HTMLElement | null;
-        for (let i = 0; node && i < 10; i += 1) {
-          const text = node.textContent || "";
+        for (let i = 0; node && i < 12; i += 1) {
+          const text = clean(node.textContent || "");
           const rect = node.getBoundingClientRect();
-          if (text.includes("在庫管理") && text.includes("在庫不足商品") && rect.width >= 220 && rect.height >= 150) {
+          const cardSize = rect.width >= 220 && rect.width <= 520 && rect.height >= 150;
+          const hasWarning = text.includes("在庫不足商品");
+          const hasCount = /\d+件/.test(text);
+
+          if (cardSize && hasWarning && hasCount) {
             node.style.display = "none";
             node.dataset.lowStockHidden = "true";
             break;
@@ -90,7 +98,6 @@ export default function SalesActionsRpc() {
         const channel = clean(cells[2].textContent || "").replace(/—/g, "");
         const quantity = Number((cells[3].textContent || "").replace(/[^0-9-]/g, ""));
         const totalSales = Number((cells[4].textContent || "").replace(/[^0-9-]/g, ""));
-        const gross = Number((cells[cells.length - 1].textContent || "").replace(/[^0-9-]/g, ""));
 
         const sale = sales.find((s) =>
           !s.is_cancelled &&
