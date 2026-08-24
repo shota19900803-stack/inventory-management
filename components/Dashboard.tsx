@@ -1,1 +1,1 @@
-// stop all writes
+// no more writes
