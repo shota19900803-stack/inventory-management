@@ -94,6 +94,7 @@ export default function Accounting() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
+  const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
   const [expenseForm, setExpenseForm] = useState({
     entry_date: today,
     category: "広告宣伝費",
@@ -174,7 +175,6 @@ export default function Accounting() {
   const grossProfit = monthSales.reduce((sum, sale) => sum + Number(sale.gross_profit || 0), 0);
   const expensesTotal = monthExpenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
   const operatingProfit = grossProfit - expensesTotal;
-  const purchasesTotal = monthPurchases.reduce((sum, purchase) => sum + Number(purchase.total_cost || 0), 0);
 
   const expenseByCategory = useMemo(() => {
     const map: Record<string, number> = {};
@@ -192,6 +192,35 @@ export default function Accounting() {
     return Array.from(values).sort().reverse();
   }, [sales, purchases, expenses]);
 
+  function resetExpenseForm() {
+    setEditingExpenseId(null);
+    setExpenseForm({
+      entry_date: today,
+      category: "広告宣伝費",
+      description: "",
+      amount: "",
+      payment_method: "クレジットカード",
+      vendor: "",
+      notes: "",
+    });
+  }
+
+  function startEditExpense(expense: Expense) {
+    setEditingExpenseId(expense.id);
+    setExpenseForm({
+      entry_date: expense.entry_date,
+      category: expense.category,
+      description: expense.description,
+      amount: String(expense.amount ?? ""),
+      payment_method: expense.payment_method || "クレジットカード",
+      vendor: expense.vendor || "",
+      notes: expense.notes || "",
+    });
+    setSelectedMonth(monthOf(expense.entry_date));
+    setMessage("経費を編集モードにしました。");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
   async function saveExpense(event: React.FormEvent) {
     event.preventDefault();
     const amount = Number(expenseForm.amount);
@@ -208,7 +237,7 @@ export default function Accounting() {
     setSaving(true);
     setMessage("");
 
-    const { error } = await supabase.from("expense_entries").insert({
+    const payload = {
       entry_date: expenseForm.entry_date,
       category: expenseForm.category,
       description: expenseForm.description.trim(),
@@ -216,20 +245,18 @@ export default function Accounting() {
       payment_method: expenseForm.payment_method,
       vendor: expenseForm.vendor.trim() || null,
       notes: expenseForm.notes.trim() || null,
-    });
+    };
 
-    if (error) {
-      setMessage(`経費登録エラー：${error.message}`);
+    const result = editingExpenseId
+      ? await supabase.from("expense_entries").update(payload).eq("id", editingExpenseId)
+      : await supabase.from("expense_entries").insert(payload);
+
+    if (result.error) {
+      setMessage(`経費${editingExpenseId ? "更新" : "登録"}エラー：${result.error.message}`);
     } else {
-      setMessage("経費を登録しました。");
+      setMessage(editingExpenseId ? "経費を更新しました。" : "経費を登録しました。");
       setSelectedMonth(expenseForm.entry_date.slice(0, 7));
-      setExpenseForm({
-        ...expenseForm,
-        description: "",
-        amount: "",
-        vendor: "",
-        notes: "",
-      });
+      resetExpenseForm();
       await loadAccounting();
     }
 
@@ -237,14 +264,23 @@ export default function Accounting() {
   }
 
   async function deleteExpense(id: string) {
-    if (!window.confirm("この経費を削除しますか？")) return;
+    const expense = expenses.find((item) => item.id === id);
+    const label = expense ? `${expense.description}（${yen(expense.amount)}）` : "この経費";
+    if (!window.confirm(`${label}を削除しますか？\n\n削除すると月次損益・営業利益・帳簿からも消えます。`)) return;
+
+    setSaving(true);
+    setMessage("");
     const { error } = await supabase.from("expense_entries").delete().eq("id", id);
+
     if (error) {
       setMessage(`経費削除エラー：${error.message}`);
-      return;
+    } else {
+      if (editingExpenseId === id) resetExpenseForm();
+      setMessage("経費を削除しました。月次損益にも反映しています。");
+      await loadAccounting();
     }
-    setMessage("経費を削除しました。");
-    await loadAccounting();
+
+    setSaving(false);
   }
 
   function exportCsv() {
@@ -362,7 +398,13 @@ export default function Accounting() {
         </section>
 
         <section style={{ ...card, marginTop: 20 }}>
-          <h2 style={{ marginTop: 0 }}>🧾 経費を登録</h2>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <div>
+              <h2 style={{ marginTop: 0, marginBottom: 6 }}>{editingExpenseId ? "✏️ 経費を編集" : "🧾 経費を登録"}</h2>
+              {editingExpenseId && <p style={{ margin: 0, color: "#b45309", fontWeight: 700 }}>編集中です。保存すると元の経費データが更新されます。</p>}
+            </div>
+            {editingExpenseId && <button type="button" onClick={resetExpenseForm} style={{ border: "1px solid #d1d5db", background: "#fff", color: "#374151", padding: "10px 14px", borderRadius: 10, fontWeight: 700, cursor: "pointer" }}>編集をキャンセル</button>}
+          </div>
           <form onSubmit={saveExpense}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 15 }}>
               <label>日付<input type="date" style={input} value={expenseForm.entry_date} onChange={(e) => setExpenseForm({ ...expenseForm, entry_date: e.target.value })} /></label>
@@ -373,7 +415,10 @@ export default function Accounting() {
               <label>支払先<input style={input} value={expenseForm.vendor} onChange={(e) => setExpenseForm({ ...expenseForm, vendor: e.target.value })} placeholder="例：楽天市場" /></label>
               <label style={{ gridColumn: "1 / -1" }}>メモ<input style={input} value={expenseForm.notes} onChange={(e) => setExpenseForm({ ...expenseForm, notes: e.target.value })} /></label>
             </div>
-            <button type="submit" disabled={saving} style={{ marginTop: 16, border: "none", background: "#111827", color: "#fff", padding: "12px 22px", borderRadius: 10, fontWeight: 700, cursor: "pointer" }}>{saving ? "登録中…" : "経費を登録する"}</button>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 16 }}>
+              <button type="submit" disabled={saving} style={{ border: "none", background: "#111827", color: "#fff", padding: "12px 22px", borderRadius: 10, fontWeight: 700, cursor: "pointer" }}>{saving ? "処理中…" : editingExpenseId ? "変更を保存する" : "経費を登録する"}</button>
+              {editingExpenseId && <button type="button" disabled={saving} onClick={resetExpenseForm} style={{ border: "1px solid #d1d5db", background: "#fff", color: "#374151", padding: "12px 18px", borderRadius: 10, fontWeight: 700, cursor: "pointer" }}>キャンセル</button>}
+            </div>
           </form>
         </section>
 
@@ -413,9 +458,36 @@ export default function Accounting() {
         </section>
 
         <section style={card}>
-          <h2 style={{ marginTop: 0 }}>🧾 登録済み経費</h2>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <div>
+              <h2 style={{ marginTop: 0, marginBottom: 6 }}>🧾 登録済み経費</h2>
+              <p style={{ marginTop: 0, color: "#6b7280" }}>間違えて登録しても、ここから編集・削除できます。</p>
+            </div>
+          </div>
           {monthExpenses.length === 0 ? <p style={{ color: "#6b7280" }}>この月の経費はありません。</p> : (
-            <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", minWidth: 760 }}><thead><tr>{["日付", "科目", "内容", "支払先", "支払方法", "金額", "操作"].map((h) => <th key={h} style={{ padding: 10, textAlign: h === "金額" ? "right" : "left", borderBottom: "1px solid #e5e7eb" }}>{h}</th>)}</tr></thead><tbody>{monthExpenses.map((expense) => <tr key={expense.id}><td style={{ padding: 10 }}>{expense.entry_date}</td><td style={{ padding: 10 }}>{expense.category}</td><td style={{ padding: 10 }}>{expense.description}</td><td style={{ padding: 10 }}>{expense.vendor || "—"}</td><td style={{ padding: 10 }}>{expense.payment_method || "—"}</td><td style={{ padding: 10, textAlign: "right", fontWeight: 700 }}>{yen(expense.amount)}</td><td style={{ padding: 10 }}><button type="button" onClick={() => deleteExpense(expense.id)} style={{ border: "1px solid #fecaca", background: "#fff5f5", color: "#b42318", padding: "6px 10px", borderRadius: 8, fontWeight: 700, cursor: "pointer" }}>削除</button></td></tr>)}</tbody></table></div>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 900 }}>
+                <thead><tr>{["日付", "科目", "内容", "支払先", "支払方法", "金額", "操作"].map((h) => <th key={h} style={{ padding: 10, textAlign: h === "金額" ? "right" : "left", borderBottom: "1px solid #e5e7eb" }}>{h}</th>)}</tr></thead>
+                <tbody>
+                  {monthExpenses.map((expense) => (
+                    <tr key={expense.id}>
+                      <td style={{ padding: 10, borderBottom: "1px solid #f1f5f9" }}>{expense.entry_date}</td>
+                      <td style={{ padding: 10, borderBottom: "1px solid #f1f5f9" }}>{expense.category}</td>
+                      <td style={{ padding: 10, borderBottom: "1px solid #f1f5f9" }}>{expense.description}</td>
+                      <td style={{ padding: 10, borderBottom: "1px solid #f1f5f9" }}>{expense.vendor || "—"}</td>
+                      <td style={{ padding: 10, borderBottom: "1px solid #f1f5f9" }}>{expense.payment_method || "—"}</td>
+                      <td style={{ padding: 10, textAlign: "right", fontWeight: 700, borderBottom: "1px solid #f1f5f9" }}>{yen(expense.amount)}</td>
+                      <td style={{ padding: 10, borderBottom: "1px solid #f1f5f9" }}>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          <button type="button" disabled={saving} onClick={() => startEditExpense(expense)} style={{ border: "1px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8", padding: "6px 10px", borderRadius: 8, fontWeight: 700, cursor: "pointer" }}>編集</button>
+                          <button type="button" disabled={saving} onClick={() => deleteExpense(expense.id)} style={{ border: "1px solid #fecaca", background: "#fff5f5", color: "#b42318", padding: "6px 10px", borderRadius: 8, fontWeight: 700, cursor: "pointer" }}>削除</button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </section>
 
