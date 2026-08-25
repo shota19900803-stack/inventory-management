@@ -21,13 +21,13 @@ type Result = {
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const yen = (n: number | null | undefined) => n == null ? "—" : `¥${Math.round(n).toLocaleString()}`;
+const checked = (v: string | null | undefined) => v ? new Date(v).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "未取得";
 
 export default function BulkRakutenPricePanel({ products, visible }: { products: Product[]; visible: boolean }) {
   const supabase = supabaseBrowser;
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState(0);
   const [message, setMessage] = useState("");
-  const [updatedCount, setUpdatedCount] = useState(0);
 
   const eligible = useMemo(() => products.filter((p) => {
     const jan = String(p.jan_code || "").replace(/\D/g, "");
@@ -35,6 +35,7 @@ export default function BulkRakutenPricePanel({ products, visible }: { products:
   }), [products]);
 
   const stockTotal = useMemo(() => products.reduce((sum, p) => sum + Number(p.stock_quantity || 0), 0), [products]);
+  const marketTotal = useMemo(() => eligible.reduce((sum, p) => sum + Number(p.stock_quantity || 0) * Number(p.rakuten_lowest_price || 0), 0), [eligible]);
 
   if (!visible) return null;
 
@@ -42,7 +43,6 @@ export default function BulkRakutenPricePanel({ products, visible }: { products:
     if (running || eligible.length === 0) return;
     setRunning(true);
     setProgress(0);
-    setUpdatedCount(0);
     setMessage("");
 
     let done = 0;
@@ -78,7 +78,6 @@ export default function BulkRakutenPricePanel({ products, visible }: { products:
           }
           done += 1;
           setProgress(done);
-          setUpdatedCount(updated);
         }
 
         if (i + 5 < eligible.length) await wait(700);
@@ -100,7 +99,7 @@ export default function BulkRakutenPricePanel({ products, visible }: { products:
           <div style={{ fontSize: 13, fontWeight: 800, color: "#dc2626", letterSpacing: 1 }}>📊 在庫相場管理</div>
           <h2 style={{ margin: "4px 0 6px", fontSize: 24 }}>楽天市場 新品最安値</h2>
           <p style={{ margin: 0, color: "#6b7280", fontSize: 14 }}>
-            在庫が1個以上あり、13桁JANが登録されている商品だけを自動取得します。
+            在庫が1個以上あり、13桁JANが登録されている商品だけを自動取得します。在庫0の商品は対象外です。
           </p>
         </div>
         <button type="button" onClick={updatePrices} disabled={running || eligible.length === 0}
@@ -113,10 +112,34 @@ export default function BulkRakutenPricePanel({ products, visible }: { products:
         <div style={{ background: "#f8fafc", borderRadius: 12, padding: 13 }}><small>商品数</small><div style={{ fontSize: 22, fontWeight: 800 }}>{products.length}件</div></div>
         <div style={{ background: "#f8fafc", borderRadius: 12, padding: 13 }}><small>在庫総数</small><div style={{ fontSize: 22, fontWeight: 800 }}>{stockTotal.toLocaleString()}個</div></div>
         <div style={{ background: "#f8fafc", borderRadius: 12, padding: 13 }}><small>今回の対象</small><div style={{ fontSize: 22, fontWeight: 800 }}>{eligible.length}件</div></div>
+        <div style={{ background: "#f8fafc", borderRadius: 12, padding: 13 }}><small>在庫の楽天相場合計</small><div style={{ fontSize: 22, fontWeight: 800 }}>{yen(marketTotal)}</div></div>
       </div>
 
       {running && <div style={{ marginTop: 14, height: 8, background: "#e5e7eb", borderRadius: 999, overflow: "hidden" }}><div style={{ width: `${eligible.length ? Math.round(progress / eligible.length * 100) : 0}%`, height: "100%", background: "#16a34a", transition: "width .2s" }} /></div>}
       {message && <div style={{ marginTop: 12, padding: 12, borderRadius: 10, background: "#f0fdf4", color: "#166534", fontWeight: 700 }}>{message}</div>}
+
+      {eligible.length > 0 && (
+        <div style={{ marginTop: 18, overflowX: "auto", border: "1px solid #e5e7eb", borderRadius: 12 }}>
+          <table style={{ width: "100%", minWidth: 760, borderCollapse: "collapse" }}>
+            <thead><tr style={{ background: "#f8fafc" }}>
+              {['商品', 'JAN', '在庫', '仕入原価', '楽天新品最安値', '相場在庫額', '最終取得'].map((h) => <th key={h} style={{ padding: 10, textAlign: h === '商品' || h === 'JAN' ? 'left' : 'right', fontSize: 12, borderBottom: '1px solid #e5e7eb' }}>{h}</th>)}
+            </tr></thead>
+            <tbody>{eligible.map((p) => {
+              const qty = Number(p.stock_quantity || 0);
+              const price = Number(p.rakuten_lowest_price || 0);
+              return <tr key={p.id}>
+                <td style={{ padding: 10, borderBottom: '1px solid #f1f5f9', fontWeight: 700 }}>{p.name}</td>
+                <td style={{ padding: 10, borderBottom: '1px solid #f1f5f9', fontFamily: 'monospace' }}>{p.jan_code}</td>
+                <td style={{ padding: 10, textAlign: 'right', borderBottom: '1px solid #f1f5f9' }}>{qty}</td>
+                <td style={{ padding: 10, textAlign: 'right', borderBottom: '1px solid #f1f5f9' }}>{yen(p.cost_price)}</td>
+                <td style={{ padding: 10, textAlign: 'right', borderBottom: '1px solid #f1f5f9', fontWeight: 800, color: price ? '#dc2626' : '#9ca3af' }}>{price ? yen(price) : '未取得'}</td>
+                <td style={{ padding: 10, textAlign: 'right', borderBottom: '1px solid #f1f5f9', fontWeight: 700 }}>{price ? yen(price * qty) : '—'}</td>
+                <td style={{ padding: 10, textAlign: 'right', borderBottom: '1px solid #f1f5f9', color: '#6b7280', whiteSpace: 'nowrap' }}>{checked(p.rakuten_price_checked_at)}</td>
+              </tr>;
+            })}</tbody>
+          </table>
+        </div>
+      )}
 
       {eligible.length === 0 && <p style={{ margin: "14px 0 0", color: "#6b7280" }}>現在、相場取得対象の商品はありません。</p>}
     </section>
