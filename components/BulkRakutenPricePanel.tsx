@@ -28,6 +28,7 @@ export default function BulkRakutenPricePanel({ products, visible }: { products:
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState(0);
   const [message, setMessage] = useState("");
+  const [hasError, setHasError] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
   const [localPrices, setLocalPrices] = useState<Record<string, number | null>>({});
   const [localCheckedAt, setLocalCheckedAt] = useState<Record<string, string | null>>({});
@@ -63,6 +64,7 @@ export default function BulkRakutenPricePanel({ products, visible }: { products:
     setRunning(true);
     setProgress(0);
     setMessage("");
+    setHasError(false);
     setErrors([]);
 
     let done = 0;
@@ -133,12 +135,11 @@ export default function BulkRakutenPricePanel({ products, visible }: { products:
       }
 
       setErrors(failedDetails);
+      setHasError(failed > 0);
       setMessage(`完了：${updated}件保存 / ${failed}件は取得・保存できず`);
-      // ここでは window.location.reload() しない。
-      // リロードするとDashboardの初期タブ「月次集計」に戻ってしまうため、
-      // 保存済み価格をこの画面にそのまま反映する。
     } catch (error: any) {
       setErrors(failedDetails);
+      setHasError(true);
       setMessage(`途中で停止：${error?.message || "取得に失敗しました。"}`);
     } finally {
       setRunning(false);
@@ -186,7 +187,7 @@ export default function BulkRakutenPricePanel({ products, visible }: { products:
       )}
 
       {message && (
-        <div style={{ marginTop: 12, padding: 12, borderRadius: 10, background: failed > 0 ? "#fff7ed" : "#f0fdf4", color: failed > 0 ? "#9a3412" : "#166534", fontWeight: 700 }}>
+        <div style={{ marginTop: 12, padding: 12, borderRadius: 10, background: hasError ? "#fff7ed" : "#f0fdf4", color: hasError ? "#9a3412" : "#166534", fontWeight: 700 }}>
           {message}
         </div>
       )}
