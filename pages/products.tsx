@@ -26,7 +26,8 @@ export default function ProductsPage() {
   function stopScanner() {
     try { controlsRef.current?.stop(); } catch {}
     controlsRef.current = null;
-    try { readerRef.current?.reset(); } catch {}
+    // BrowserMultiFormatReaderの型にはreset()がないため、controls.stop()と
+    // MediaStreamのtrack停止だけで確実にカメラを解放する。
     readerRef.current = null;
     const video = videoRef.current;
     if (video?.srcObject instanceof MediaStream) {
@@ -38,8 +39,6 @@ export default function ProductsPage() {
   }
 
   // カメラUIを先に描画してからZXingを起動する。
-  // 以前はstartScanner内でsetScanning(true)直後にvideoRefを参照していたため、
-  // video要素がまだDOMに存在せず「camera not found」→即終了になっていた。
   useEffect(() => {
     if (!scanning || scannerStartingRef.current) return;
     let cancelled = false;
@@ -49,7 +48,6 @@ export default function ProductsPage() {
       try {
         if (!navigator.mediaDevices?.getUserMedia) throw new Error("camera unavailable");
 
-        // Reactがvideo要素をDOMへ反映するのを1フレーム待つ
         await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
         if (cancelled || !videoRef.current) return;
 
