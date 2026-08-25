@@ -1,5 +1,6 @@
 import dynamic from "next/dynamic";
 import { Component, useEffect } from "react";
+import { supabaseBrowser } from "../lib/supabase";
 
 const Dashboard = dynamic(() => import("../components/Dashboard"), {
   ssr: false,
@@ -24,6 +25,8 @@ export default function Home() {
   useEffect(() => {
     let stopped = false;
     let observer: MutationObserver | null = null;
+    const supabase = supabaseBrowser;
+
     const hideLowStockCard = () => {
       if (stopped) return true;
       const main = document.querySelector("main");
@@ -46,13 +49,77 @@ export default function Home() {
       }
       return false;
     };
-    const run = () => hideLowStockCard();
+
+    // 商品管理の「履歴」は、その行の商品だけを表示する専用履歴画面へ直結させる。
+    // Dashboard.tsx 本体を大きく書き換えず、既存の編集・削除・一覧機能を壊さない。
+    const bindProductHistoryButtons = () => {
+      const main = document.querySelector("main");
+      if (!main) return;
+
+      const buttons = Array.from(main.querySelectorAll("button"));
+      buttons.forEach((button) => {
+        const text = (button.textContent || "").trim();
+        if (text !== "履歴") return;
+        if (button.getAttribute("data-product-history-bound") === "true") return;
+
+        button.setAttribute("data-product-history-bound", "true");
+        button.addEventListener("click", async (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+
+          const row = button.closest("tr");
+          if (!row) return;
+
+          const cells = Array.from(row.querySelectorAll("td"));
+          const productName = (cells[0]?.textContent || "").trim();
+          if (!productName) return;
+
+          button.disabled = true;
+          const originalText = button.textContent;
+          button.textContent = "読込中…";
+
+          try {
+            const { data, error } = await supabase
+              .from("products")
+              .select("id")
+              .eq("name", productName)
+              .limit(1)
+              .maybeSingle();
+
+            if (error) throw error;
+            if (!data?.id) {
+              alert("この商品の履歴を開けませんでした。商品情報を確認してください。");
+              return;
+            }
+
+            window.location.href = `/product-history?productId=${encodeURIComponent(data.id)}`;
+          } catch (error) {
+            console.error("商品履歴への移動に失敗:", error);
+            alert("商品履歴を開けませんでした。もう一度お試しください。");
+          } finally {
+            button.disabled = false;
+            button.textContent = originalText || "履歴";
+          }
+        });
+      });
+    };
+
+    const run = () => {
+      hideLowStockCard();
+      bindProductHistoryButtons();
+    };
+
     run();
     const timer = window.setInterval(run, 700);
     observer = new MutationObserver(run);
     const root = document.querySelector("main") || document.body;
     observer.observe(root, { childList: true, subtree: true });
-    return () => { stopped = true; window.clearInterval(timer); observer?.disconnect(); };
+
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+      observer?.disconnect();
+    };
   }, []);
 
   return (
