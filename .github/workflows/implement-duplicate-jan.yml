@@ -7,70 +7,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Apply duplicate JAN handling
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path("components/Dashboard.tsx")
-          s = p.read_text()
-
-          marker = '''    const result = editingProductId
-      ? await supabase
-          .from("products")
-          .update(payload)
-          .eq("id", editingProductId)
-      : await supabase
-          .from("products")
-          .insert(payload);
-'''
-
-          insert = '''    // 新規商品登録時、同じJANが既に登録されていれば重複登録せず、
-    // 既存商品を選択した状態で仕入登録画面へ移動する。
-    if (!editingProductId && payload.jan_code) {
-      const normalizedJan = String(payload.jan_code).replace(/\\D/g, "");
-      const existing = products.find(
-        (product) =>
-          String(product.jan_code ?? "").replace(/\\D/g, "") === normalizedJan
-      );
-
-      if (existing) {
-        setSaving(false);
-        setMessage(
-          `このJANは既に登録済みです：「${existing.name}」\\n仕入登録画面を開きました。`
-        );
-        setPurchaseForm({
-          ...initialPurchaseForm,
-          product_id: existing.id,
-          unit_cost:
-            existing.cost_price == null
-              ? ""
-              : String(existing.cost_price),
-        });
-        setTab("purchases");
-        setEditingProductId(null);
-        setProductForm(initialProductForm);
-        window.scrollTo({ top: 0, behavior: "smooth" });
-        return;
-      }
-    }
-
-'''
-
-          if "const normalizedJan = String(payload.jan_code)" not in s:
-              if marker not in s:
-                  raise SystemExit("saveProduct marker not found")
-              s = s.replace(marker, insert + marker, 1)
-              p.write_text(s)
-          else:
-              print("duplicate JAN handling already present")
-          PY
-
+      - name: Apply patch
+        run: echo 'CmZyb20gcGF0aGxpYiBpbXBvcnQgUGF0aApwID0gUGF0aCgiY29tcG9uZW50cy9EYXNoYm9hcmQudHN4IikKcyA9IHAucmVhZF90ZXh0KCkKbWFya2VyID0gJycnICAgIGNvbnN0IHJlc3VsdCA9IGVkaXRpbmdQcm9kdWN0SWQKICAgICAgPyBhd2FpdCBzdXBhYmFzZQogICAgICAgICAgLmZyb20oInByb2R1Y3RzIikKICAgICAgICAgIC51cGRhdGUocGF5bG9hZCkKICAgICAgICAgIC5lcSgiaWQiLCBlZGl0aW5nUHJvZHVjdElkKQogICAgICA6IGF3YWl0IHN1cGFiYXNlCiAgICAgICAgICAuZnJvbSgicHJvZHVjdHMiKQogICAgICAgICAgLmluc2VydChwYXlsb2FkKTsKJycnCmluc2VydCA9ICcnJyAgICAvLyDmlrDopo/llYblk4HnmbvpjLLmmYLjgIHlkIzjgZhKQU7jgYzml6LjgavnmbvpjLLjgZXjgozjgabjgYTjgozjgbDph43opIfnmbvpjLLjgZvjgZrjgIHml6LlrZjllYblk4HjgpLpgbjmip7jgZfjgZ/nirbmhYvjgafku5XlhaXnmbvpjLLnlLvpnaLjgbjnp7vli5XjgZnjgovjgIIKICAgIGlmICghZWRpdGluZ1Byb2R1Y3RJZCAmJiBwYXlsb2FkLmphbl9jb2RlKSB7CiAgICAgIGNvbnN0IG5vcm1hbGl6ZWRKYW4gPSBTdHJpbmcocGF5bG9hZC5qYW5fY29kZSkucmVwbGFjZSgvXFxEL2csICIiKTsKICAgICAgY29uc3QgZXhpc3RpbmcgPSBwcm9kdWN0cy5maW5kKAogICAgICAgIChwcm9kdWN0KSA9PgogICAgICAgICAgU3RyaW5nKHByb2R1Y3QuamFuX2NvZGUgPz8gIiIpLnJlcGxhY2UoL1xcRC9nLCAiIikgPT09IG5vcm1hbGl6ZWRKYW4KICAgICAgKTsKCiAgICAgIGlmIChleGlzdGluZykgewogICAgICAgIHNldFNhdmluZyhmYWxzZSk7CiAgICAgICAgc2V0TWVzc2FnZSgKICAgICAgICAgIGDjgZPjga5KQU7jga/ml6LjgavnmbvpjLLmuIjjgb/jgafjgZnvvJrjgIwke2V4aXN0aW5nLm5hbWV944CNXFxu5LuV5YWl55m76Yyy55S76Z2i44KS6ZaL44GN44G+44GX44Gf44CCYAogICAgICAgICk7CiAgICAgICAgc2V0UHVyY2hhc2VGb3JtKHsKICAgICAgICAgIC4uLmluaXRpYWxQdXJjaGFzZUZvcm0sCiAgICAgICAgICBwcm9kdWN0X2lkOiBleGlzdGluZy5pZCwKICAgICAgICAgIHVuaXRfY29zdDoKICAgICAgICAgICAgZXhpc3RpbmcuY29zdF9wcmljZSA9PSBudWxsID8gIiIgOiBTdHJpbmcoZXhpc3RpbmcuY29zdF9wcmljZSksCiAgICAgICAgfSk7CiAgICAgICAgc2V0VGFiKCJwdXJjaGFzZXMiKTsKICAgICAgICBzZXRFZGl0aW5nUHJvZHVjdElkKG51bGwpOwogICAgICAgIHNldFByb2R1Y3RGb3JtKGluaXRpYWxQcm9kdWN0Rm9ybSk7CiAgICAgICAgd2luZG93LnNjcm9sbFRvKHsgdG9wOiAwLCBiZWhhdmlvcjogInNtb290aCIgfSk7CiAgICAgICAgcmV0dXJuOwogICAgICB9CiAgICB9CgonJycKaWYgImNvbnN0IG5vcm1hbGl6ZWRKYW4gPSBTdHJpbmcocGF5bG9hZC5qYW5fY29kZSkiIG5vdCBpbiBzOgogICAgaWYgbWFya2VyIG5vdCBpbiBzOgogICAgICAgIHJhaXNlIFN5c3RlbUV4aXQoIm1hcmtlciBub3QgZm91bmQiKQogICAgcyA9IHMucmVwbGFjZShtYXJrZXIsIGluc2VydCArIG1hcmtlciwgMSkKICAgIHAud3JpdGVfdGV4dChzKQplbHNlOgogICAgcHJpbnQoImFscmVhZHkgcGF0Y2hlZCIpClBhdGgoIi5naXRodWIvd29ya2Zsb3dzL2ltcGxlbWVudC1kdXBsaWNhdGUtamFuLnltbCIpLnVubGluayhtaXNzaW5nX29rPVRydWUpCg==' | base64 -d | python3
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add components/Dashboard.tsx
-          rm -f .github/workflows/implement-duplicate-jan.yml
-          git add -A .github/workflows
+          git add components/Dashboard.tsx .github/workflows/implement-duplicate-jan.yml
           git diff --cached --check
           git commit -m "Add duplicate JAN purchase flow"
           git push
