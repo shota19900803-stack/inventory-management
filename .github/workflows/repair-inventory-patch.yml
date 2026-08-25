@@ -1,0 +1,39 @@
+name: repair-inventory-patch
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/repair-inventory-patch.yml
+permissions:
+  contents: write
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Run existing patch script
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          import textwrap
+          wf=Path('.github/workflows/patch-inventory-management.yml').read_text()
+          a=wf.index("          python3 <<'PY'") + len("          python3 <<'PY'\n")
+          b=wf.index("          PY\n          git checkout")
+          code=textwrap.dedent(wf[a:b])
+          exec(compile(code,'patch-script','exec'))
+          PY
+          git fetch origin 7bccc8758eeda98aed561bca886136accc905328 --depth=1
+          git checkout 7bccc8758eeda98aed561bca886136accc905328 -- README.md
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add components/Dashboard.tsx README.md
+          git diff --cached --check
+          git commit -m "Add history editing and purchase JAN scanner"
+          git push
+          rm -f .github/workflows/patch-inventory-management.yml .github/workflows/repair-inventory-patch.yml
+          git add -A .github/workflows
+          git commit -m "Remove temporary patch workflows"
+          git push
