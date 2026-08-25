@@ -1,14 +1,33 @@
 import { NextRequest, NextResponse } from "next/server";
 
-function cleanJan(value: string) {
-  return value.replace(/\D/g, "").slice(0, 13);
+function cleanJan(value: unknown) {
+  return String(value ?? "").replace(/\D/g, "").slice(0, 13);
+}
+
+function cleanText(value: unknown) {
+  return String(value ?? "").replace(/[\s　]+/g, " ").trim();
+}
+
+function normalize(value: unknown) {
+  return cleanText(value)
+    .toLowerCase()
+    .replace(/[【】\[\]（）()「」『』<>＜＞]/g, " ")
+    .replace(/[^0-9a-zぁ-んァ-ヶ一-龠 ]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function fetchJson(url: URL, retries = 2) {
+async function fetchJson(url: URL, accessKey: string, retries = 2) {
   for (let attempt = 0; attempt <= retries; attempt += 1) {
-    const response = await fetch(url, { cache: "no-store" });
+    const response = await fetch(url, {
+      cache: "no-store",
+      headers: {
+        Accept: "application/json",
+        accessKey,
+      },
+    });
     const data = await response.json().catch(() => ({}));
 
     if (response.ok) return { response, data };
@@ -24,17 +43,6 @@ async function fetchJson(url: URL, retries = 2) {
   throw new Error("楽天APIへの接続に失敗しました。");
 }
 
-/**
- * JANから楽天の商品価格ナビを直接検索する。
- *
- * 以前の実装では「楽天市場商品検索APIでJANをkeyword検索 →
- * 見つからなければ商品価格ナビ」という二段構えにしていたが、
- * JANコードをkeywordとして商品検索APIに投げると商品によっては
- * 正確に紐付かず、132件すべて取得失敗になるケースがあった。
- *
- * 商品価格ナビ製品検索APIはproductCode=JANを正式に受け付けるため、
- * こちらを第一経路にして、製品単位のsalesMinPriceを取得する。
- */
 async function searchRakutenProduct(appId: string, accessKey: string, jan: string) {
   const url = new URL(
     "https://openapi.rakuten.co.jp/ichibaproduct/api/Product/Search/20250801"
@@ -43,22 +51,22 @@ async function searchRakutenProduct(appId: string, accessKey: string, jan: strin
   url.searchParams.set("format", "json");
   url.searchParams.set("formatVersion", "2");
   url.searchParams.set("applicationId", appId);
-  url.searchParams.set("accessKey", accessKey);
   url.searchParams.set("productCode", jan);
   url.searchParams.set("hits", "1");
   url.searchParams.set(
     "elements",
-    "productCode,productName,productNo,salesMinPrice,usedExcludeSalesMinPrice,salesItemCount"
+    "productCode,productName,productNo,brandName,salesMinPrice,usedExcludeSalesMinPrice,salesItemCount,usedExcludeSalesItemCount"
   );
 
-  return fetchJson(url);
+  return fetchJson(url, accessKey);
 }
 
-/**
- * Product Searchで取得できなかった場合だけ、楽天市場の商品検索APIを
- * JAN keywordでフォールバック検索する。
- */
-async function searchRakutenItems(appId: string, accessKey: string, jan: string) {
+async function searchRakutenItems(
+  appId: string,
+  accessKey: string,
+  keyword: string,
+  sort = "+itemPrice"
+) {
   const url = new URL(
     "https://openapi.rakuten.co.jp/ichibams/api/IchibaItem/Search/20260701"
   );
@@ -66,10 +74,9 @@ async function searchRakutenItems(appId: string, accessKey: string, jan: string)
   url.searchParams.set("format", "json");
   url.searchParams.set("formatVersion", "2");
   url.searchParams.set("applicationId", appId);
-  url.searchParams.set("accessKey", accessKey);
-  url.searchParams.set("keyword", jan);
+  url.searchParams.set("keyword", keyword);
   url.searchParams.set("hits", "30");
-  url.searchParams.set("sort", "+itemPrice");
+  url.searchParams.set("sort", sort);
   url.searchParams.set("availability", "1");
   url.searchParams.set("field", "1");
   url.searchParams.set("purchaseType", "0");
@@ -82,7 +89,46 @@ async function searchRakutenItems(appId: string, accessKey: string, jan: string)
     "中古 中古品 ユーズド used ジャンク ジャンク品 開封済み 開封品 箱なし 箱欠品 欠品 訳あり アウトレット 展示品 リファービッシュ 再生品"
   );
 
-  return fetchJson(url);
+  return fetchJson(url, accessKey);
+}
+
+function extractItems(data: any) {
+  if (!Array.isArray(data?.items)) return [];
+  return data.items.map((entry: any) => entry?.item ?? entry).filter(Boolean);
+}
+
+function chooseItem(items: any[], productName: string, brand: string, model: string) {
+  const target = normalize(productName);
+  const brandN = normalize(brand);
+  const modelN = normalize(model);
+  const tokens = target.split(" ").filter((v) => v.length >= 2).slice(0, 8);
+
+  const scored = items
+    .map((item: any) => {
+      const name = normalize(item?.itemName);
+      if (!name) return null;
+
+      const lowerOriginal = cleanText(item?.itemName).toLowerCase();
+      if (/中古|中古品|ユーズド|used|ジャンク|開封済み|開封品|箱なし|欠品|訳あり|アウトレット|展示品|リファービッシュ|再生品/.test(lowerOriginal)) {
+        return null;
+      }
+
+      const price = Number(item?.itemPrice ?? 0);
+      if (!Number.isFinite(price) || price <= 0) return null;
+
+      let score = 0;
+      if (target && name === target) score += 100;
+      if (target && name.includes(target)) score += 60;
+      if (modelN && name.includes(modelN)) score += 35;
+      if (brandN && name.includes(brandN)) score += 20;
+      for (const token of tokens) if (name.includes(token)) score += 3;
+
+      return { item, score, price };
+    })
+    .filter(Boolean)
+    .sort((a: any, b: any) => b.score - a.score || a.price - b.price);
+
+  return scored.length ? scored[0] : null;
 }
 
 export async function POST(request: NextRequest) {
@@ -100,131 +146,136 @@ export async function POST(request: NextRequest) {
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json(
-      { error: "JSONが不正です。", results: [] },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "JSONが不正です。", results: [] }, { status: 400 });
   }
 
+  const rawProducts = Array.isArray(body?.products) ? body.products : [];
   const rawJans = Array.isArray(body?.jans) ? body.jans : [];
-  const jans: string[] = Array.from(
-    new Set(
-      rawJans
-        .map((v: unknown) => cleanJan(String(v)))
-        .filter((v: string) => v.length === 13)
-    )
+
+  const products = rawProducts.length
+    ? rawProducts.map((p: any) => ({
+        jan: cleanJan(p?.jan),
+        name: cleanText(p?.name),
+        brand: cleanText(p?.brand),
+        model: cleanText(p?.model),
+      }))
+    : rawJans.map((jan: unknown) => ({ jan: cleanJan(jan), name: "", brand: "", model: "" }));
+
+  const unique = Array.from(
+    new Map(products.filter((p: any) => p.jan.length === 13).map((p: any) => [p.jan, p])).values()
   );
 
-  if (jans.length > 5) {
-    return NextResponse.json(
-      { error: "1回の取得は最大5商品です。", results: [] },
-      { status: 400 }
-    );
+  if (unique.length > 5) {
+    return NextResponse.json({ error: "1回の取得は最大5商品です。", results: [] }, { status: 400 });
   }
 
   const results: any[] = [];
 
-  for (let i = 0; i < jans.length; i += 1) {
-    const jan = jans[i];
+  for (let i = 0; i < unique.length; i += 1) {
+    const product = unique[i];
+    const jan = product.jan;
 
     try {
-      // まずJANを正式なproductCodeとして商品価格ナビへ問い合わせる。
-      const productResult = await searchRakutenProduct(appId, accessKey, jan);
+      let productApiError = "";
 
-      if (productResult.response.ok) {
-        const item = Array.isArray(productResult.data?.items)
-          ? productResult.data.items[0]
-          : null;
+      // 第一候補：楽天の商品価格ナビ。JANをproductCodeとして正確に照合する。
+      try {
+        const productResult = await searchRakutenProduct(appId, accessKey, jan);
+        const productItems = extractItems(productResult.data);
+        const item = productItems[0];
 
-        if (item) {
-          const normalPrice = Number(item?.salesMinPrice ?? 0);
-          const newOnlyPrice = Number(item?.usedExcludeSalesMinPrice ?? 0);
+        if (productResult.response.ok && item) {
+          const newPrice = Number(item?.usedExcludeSalesMinPrice ?? 0);
+          const newCount = Number(item?.usedExcludeSalesItemCount ?? 0);
 
-          // 新品除外版が返る場合はそれを優先。2026年3月以降nullになる場合が
-          // あるため、その場合は通常のsalesMinPriceへフォールバックする。
-          const price =
-            Number.isFinite(newOnlyPrice) && newOnlyPrice > 0
-              ? newOnlyPrice
-              : Number.isFinite(normalPrice) && normalPrice > 0
-              ? normalPrice
-              : null;
-
-          if (price != null) {
+          // 「新品最安値」なので、中古を含むsalesMinPriceは使わない。
+          if (Number.isFinite(newPrice) && newPrice > 0 && newCount > 0) {
             results.push({
               jan,
-              price,
-              productName: item?.productName ?? null,
+              price: newPrice,
+              productName: item?.productName ?? product.name ?? null,
               productCode: item?.productCode ?? jan,
-              salesItemCount: Number(item?.salesItemCount ?? 0),
-              source: "rakuten-product-search",
+              salesItemCount: newCount,
+              source: "rakuten-product-search-new-only",
               error: null,
             });
-
-            if (i < jans.length - 1) await sleep(900);
+            if (i < unique.length - 1) await sleep(700);
             continue;
           }
+        } else {
+          productApiError =
+            productResult.data?.error_description ||
+            productResult.data?.error ||
+            `商品価格ナビ HTTP ${productResult.response.status}`;
+        }
+      } catch (error: any) {
+        productApiError = error?.message || "商品価格ナビへの接続に失敗しました。";
+      }
+
+      // 第二候補：JAN検索。楽天市場側にJANが検索語として登録されている商品を拾う。
+      let candidate: any = null;
+      let itemApiError = "";
+
+      try {
+        const janResult = await searchRakutenItems(appId, accessKey, jan);
+        if (janResult.response.ok) {
+          candidate = chooseItem(extractItems(janResult.data), product.name, product.brand, product.model);
+        } else {
+          itemApiError =
+            janResult.data?.error_description ||
+            janResult.data?.error ||
+            `楽天市場検索 HTTP ${janResult.response.status}`;
+        }
+      } catch (error: any) {
+        itemApiError = error?.message || "楽天市場検索への接続に失敗しました。";
+      }
+
+      // 第三候補：商品名検索。JANが楽天の商品名に入っていないケースに対応する。
+      if (!candidate && product.name) {
+        try {
+          const keyword = [product.name, product.model, product.brand]
+            .filter(Boolean)
+            .join(" ")
+            .slice(0, 128);
+          const nameResult = await searchRakutenItems(appId, accessKey, keyword);
+          if (nameResult.response.ok) {
+            candidate = chooseItem(extractItems(nameResult.data), product.name, product.brand, product.model);
+          } else if (!itemApiError) {
+            itemApiError =
+              nameResult.data?.error_description ||
+              nameResult.data?.error ||
+              `商品名検索 HTTP ${nameResult.response.status}`;
+          }
+        } catch (error: any) {
+          if (!itemApiError) itemApiError = error?.message || "商品名検索に失敗しました。";
         }
       }
 
-      // 商品価格ナビで価格が取れない商品のみ、楽天市場の商品検索APIへフォールバック。
-      const itemResult = await searchRakutenItems(appId, accessKey, jan);
-
-      if (itemResult.response.ok) {
-        const items = Array.isArray(itemResult.data?.items)
-          ? itemResult.data.items
-          : [];
-
-        const candidate = items.find((item: any) => {
-          const price = Number(item?.itemPrice ?? 0);
-          return (
-            Number(item?.availability ?? 0) === 1 &&
-            Number.isFinite(price) &&
-            price > 0
-          );
+      if (candidate) {
+        results.push({
+          jan,
+          price: candidate.price,
+          productName: candidate.item?.itemName ?? product.name ?? null,
+          itemUrl: candidate.item?.itemUrl ?? null,
+          shopName: candidate.item?.shopName ?? null,
+          source: "rakuten-ichiba-item-search-new-filtered",
+          error: null,
         });
-
-        if (candidate) {
-          results.push({
-            jan,
-            price: Number(candidate.itemPrice),
-            productName: candidate.itemName ?? null,
-            itemUrl: candidate.itemUrl ?? null,
-            shopName: candidate.shopName ?? null,
-            source: "rakuten-ichiba-item-search-fallback",
-            error: null,
-          });
-        } else {
-          const productError = productResult.data?.error_description || productResult.data?.error;
-          const itemError = itemResult.data?.error_description || itemResult.data?.error;
-          results.push({
-            jan,
-            price: null,
-            error:
-              productError || itemError ||
-              "楽天市場でこのJANに対応する価格が見つかりませんでした。",
-          });
-        }
       } else {
         results.push({
           jan,
           price: null,
           error:
-            productResult.data?.error_description ||
-            productResult.data?.error ||
-            itemResult.data?.error_description ||
-            itemResult.data?.error ||
-            `楽天API HTTP ${itemResult.response.status}`,
+            productApiError ||
+            itemApiError ||
+            "楽天市場で新品価格を確認できませんでした。",
         });
       }
     } catch (error: any) {
-      results.push({
-        jan,
-        price: null,
-        error: error?.message || "楽天APIへの接続に失敗しました。",
-      });
+      results.push({ jan, price: null, error: error?.message || "楽天APIへの接続に失敗しました。" });
     }
 
-    if (i < jans.length - 1) await sleep(900);
+    if (i < unique.length - 1) await sleep(700);
   }
 
   return NextResponse.json({ results });
