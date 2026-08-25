@@ -25,7 +25,13 @@ export async function POST(request: NextRequest) {
   }
 
   const rawJans = Array.isArray(body?.jans) ? body.jans : [];
-  const jans = Array.from(new Set(rawJans.map((v: unknown) => cleanJan(String(v))).filter((v: string) => v.length === 13)));
+  const jans: string[] = Array.from(
+    new Set(
+      rawJans
+        .map((v: unknown) => cleanJan(String(v)))
+        .filter((v: string) => v.length === 13)
+    )
+  );
 
   // API負荷と429対策のため、一度に処理するJANは最大5件。
   if (jans.length > 5) {
@@ -35,7 +41,7 @@ export async function POST(request: NextRequest) {
   const results: any[] = [];
 
   for (let i = 0; i < jans.length; i += 1) {
-    const jan = jans[i];
+    const jan: string = jans[i];
     try {
       const url = new URL("https://openapi.rakuten.co.jp/ichibaproduct/api/Product/Search/20250801");
       url.searchParams.set("format", "json");
