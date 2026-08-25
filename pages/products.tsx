@@ -19,51 +19,82 @@ export default function ProductsPage() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const readerRef = useRef<BrowserMultiFormatReader | null>(null);
   const controlsRef = useRef<{ stop: () => void } | null>(null);
+  const scannerStartingRef = useRef(false);
 
   const update = (key: keyof typeof initialForm, value: string) => setForm((prev) => ({ ...prev, [key]: value }));
 
   function stopScanner() {
     try { controlsRef.current?.stop(); } catch {}
     controlsRef.current = null;
+    try { readerRef.current?.reset(); } catch {}
     readerRef.current = null;
     const video = videoRef.current;
     if (video?.srcObject instanceof MediaStream) {
       video.srcObject.getTracks().forEach((track) => track.stop());
       video.srcObject = null;
     }
+    scannerStartingRef.current = false;
     setScanning(false);
   }
 
-  async function startScanner() {
-    if (scanning) return;
-    setError(""); setMessage(""); setScanning(true);
-    try {
-      if (!navigator.mediaDevices?.getUserMedia) throw new Error("camera unavailable");
-      const hints = new Map<DecodeHintType, unknown>();
-      hints.set(DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.EAN_13]);
-      const reader = new BrowserMultiFormatReader(hints);
-      readerRef.current = reader;
-      const devices = await BrowserMultiFormatReader.listVideoInputDevices();
-      const backCamera = devices.find((device) => /back|rear|environment|背面|後面/i.test(device.label));
-      const deviceId = backCamera?.deviceId || devices[0]?.deviceId;
-      if (!deviceId || !videoRef.current) throw new Error("camera not found");
-      setMessage("📷 JANバーコードを枠の中に入れてください。");
-      controlsRef.current = await reader.decodeFromVideoDevice(deviceId, videoRef.current, (result) => {
-        if (!result) return;
-        const jan = cleanJan(result.getText());
-        if (jan.length !== 13) return;
-        stopScanner();
-        lastLookupJan.current = "";
-        setForm((prev) => ({ ...prev, jan_code: jan }));
-        setMessage("✅ JANを読み取りました。商品情報を取得しています…");
-        void lookupByJan(jan);
-      });
-    } catch (scannerError) {
-      console.error("JANバーコード読取エラー:", scannerError);
-      stopScanner();
-      setError("カメラを起動できませんでした。iPhoneのカメラ権限とSafariのサイト設定を確認してください。");
-    }
-  }
+  // カメラUIを先に描画してからZXingを起動する。
+  // 以前はstartScanner内でsetScanning(true)直後にvideoRefを参照していたため、
+  // video要素がまだDOMに存在せず「camera not found」→即終了になっていた。
+  useEffect(() => {
+    if (!scanning || scannerStartingRef.current) return;
+    let cancelled = false;
+    scannerStartingRef.current = true;
+
+    const initScanner = async () => {
+      try {
+        if (!navigator.mediaDevices?.getUserMedia) throw new Error("camera unavailable");
+
+        // Reactがvideo要素をDOMへ反映するのを1フレーム待つ
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        if (cancelled || !videoRef.current) return;
+
+        const hints = new Map<DecodeHintType, unknown>();
+        hints.set(DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.EAN_13]);
+        const reader = new BrowserMultiFormatReader(hints);
+        readerRef.current = reader;
+
+        const devices = await BrowserMultiFormatReader.listVideoInputDevices();
+        if (cancelled) return;
+        const backCamera = devices.find((device) => /back|rear|environment|背面|後面/i.test(device.label));
+        const deviceId = backCamera?.deviceId || devices[0]?.deviceId;
+        const video = videoRef.current;
+        if (!deviceId || !video) throw new Error("camera not found");
+
+        setMessage("📷 JANバーコードを枠の中に入れてください。");
+        const controls = await reader.decodeFromVideoDevice(deviceId, video, (result) => {
+          if (cancelled || !result) return;
+          const jan = cleanJan(result.getText());
+          if (jan.length !== 13) return;
+          stopScanner();
+          lastLookupJan.current = "";
+          setForm((prev) => ({ ...prev, jan_code: jan }));
+          setMessage("✅ JANを読み取りました。商品情報を取得しています…");
+          void lookupByJan(jan);
+        });
+
+        if (cancelled) {
+          try { controls.stop(); } catch {}
+          return;
+        }
+        controlsRef.current = controls;
+      } catch (scannerError) {
+        if (cancelled) return;
+        console.error("JANバーコード読取エラー:", scannerError);
+        setScanning(false);
+        setError("カメラを起動できませんでした。iPhoneのカメラ権限とSafariのサイト設定を確認してください。");
+      } finally {
+        scannerStartingRef.current = false;
+      }
+    };
+
+    void initScanner();
+    return () => { cancelled = true; };
+  }, [scanning]);
 
   useEffect(() => () => stopScanner(), []);
 
@@ -121,7 +152,7 @@ export default function ProductsPage() {
           <p style={{ marginTop: 0, color: "#6b7280" }}>JANを入力すると商品情報を自動取得できます。カメラでJANバーコードを読み取ることもできます。</p>
           <form onSubmit={saveProduct}>
             <label style={fieldStyle}>商品名 *<input style={inputStyle} value={form.name} onChange={(e) => update("name", e.target.value)} placeholder="例：ポケモンカード BOX" /></label>
-            <div style={{ marginBottom: 18 }}><label style={{ display: "block", fontWeight: 700 }}>JANコード<input style={inputStyle} inputMode="numeric" value={form.jan_code} onChange={(e) => handleJanChange(e.target.value)} onBlur={() => { if (cleanJan(form.jan_code).length === 13) void lookupByJan(); }} placeholder="13桁のJANコード" /></label><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 9, marginTop: 9 }}><button type="button" onClick={() => void startScanner()} disabled={scanning || lookingUp} style={{ border: 0, borderRadius: 11, padding: "13px 10px", background: scanning || lookingUp ? "#d1d5db" : "#111827", color: "#fff", fontWeight: 800, fontSize: 14 }}>📷 JANをカメラで読取</button><button type="button" onClick={() => void lookupByJan()} disabled={lookingUp || cleanJan(form.jan_code).length !== 13} style={{ border: 0, borderRadius: 11, padding: "13px 10px", background: lookingUp || cleanJan(form.jan_code).length !== 13 ? "#d1d5db" : "#15803d", color: "#fff", fontWeight: 800, fontSize: 14 }}>{lookingUp ? "🔎 取得中…" : "🔎 情報を取得"}</button></div></div>
+            <div style={{ marginBottom: 18 }}><label style={{ display: "block", fontWeight: 700 }}>JANコード<input style={inputStyle} inputMode="numeric" value={form.jan_code} onChange={(e) => handleJanChange(e.target.value)} onBlur={() => { if (cleanJan(form.jan_code).length === 13) void lookupByJan(); }} placeholder="13桁のJANコード" /></label><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 9, marginTop: 9 }}><button type="button" onClick={() => setScanning(true)} disabled={scanning || lookingUp} style={{ border: 0, borderRadius: 11, padding: "13px 10px", background: scanning || lookingUp ? "#d1d5db" : "#111827", color: "#fff", fontWeight: 800, fontSize: 14 }}>📷 JANをカメラで読取</button><button type="button" onClick={() => void lookupByJan()} disabled={lookingUp || cleanJan(form.jan_code).length !== 13} style={{ border: 0, borderRadius: 11, padding: "13px 10px", background: lookingUp || cleanJan(form.jan_code).length !== 13 ? "#d1d5db" : "#15803d", color: "#fff", fontWeight: 800, fontSize: 14 }}>{lookingUp ? "🔎 取得中…" : "🔎 情報を取得"}</button></div></div>
             {scanning && <div style={{ marginBottom: 18, padding: 12, borderRadius: 16, background: "#111827" }}><div style={{ position: "relative", overflow: "hidden", borderRadius: 12, background: "#000", aspectRatio: "16 / 9" }}><video ref={videoRef} muted playsInline autoPlay style={{ width: "100%", height: "100%", objectFit: "cover" }} /><div style={{ position: "absolute", left: "10%", right: "10%", top: "32%", height: "36%", border: "3px solid #fff", borderRadius: 12, boxShadow: "0 0 0 9999px rgba(0,0,0,.25)" }} /><div style={{ position: "absolute", left: 0, right: 0, bottom: 10, textAlign: "center", color: "#fff", fontWeight: 800, fontSize: 14, textShadow: "0 1px 3px #000" }}>JANバーコードを枠内へ</div></div><button type="button" onClick={stopScanner} style={{ width: "100%", marginTop: 10, border: "1px solid #4b5563", borderRadius: 10, padding: "11px", background: "#fff", color: "#111827", fontWeight: 800 }}>カメラを閉じる</button></div>}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 0 }}><label style={fieldStyle}>SKU<input style={inputStyle} value={form.sku} onChange={(e) => update("sku", e.target.value)} placeholder="任意" /></label><label style={fieldStyle}>型番<input style={inputStyle} value={form.model_number} onChange={(e) => update("model_number", e.target.value)} placeholder="任意" /></label><label style={fieldStyle}>ブランド<input style={inputStyle} value={form.brand} onChange={(e) => update("brand", e.target.value)} placeholder="例：BANDAI" /></label><label style={fieldStyle}>カテゴリ<input style={inputStyle} value={form.category} onChange={(e) => update("category", e.target.value)} placeholder="例：玩具" /></label><label style={fieldStyle}>初期在庫<input style={inputStyle} type="number" min="0" value={form.stock_quantity} onChange={(e) => update("stock_quantity", e.target.value)} /></label><label style={fieldStyle}>仕入価格<input style={inputStyle} type="number" min="0" value={form.cost_price} onChange={(e) => update("cost_price", e.target.value)} placeholder="円" /></label><label style={fieldStyle}>販売価格<input style={inputStyle} type="number" min="0" value={form.selling_price} onChange={(e) => update("selling_price", e.target.value)} placeholder="円" /></label></div>
             {error && <div style={{ margin: "4px 0 12px", padding: 12, borderRadius: 10, background: "#fff1f2", color: "#b42318", fontWeight: 700 }}>{error}</div>}{message && <div style={{ margin: "4px 0 12px", padding: 12, borderRadius: 10, background: "#f0fdf4", color: "#166534", fontWeight: 700 }}>{message}</div>}
