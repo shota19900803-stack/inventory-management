@@ -1,5 +1,7 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { BrowserMultiFormatReader } from "@zxing/browser";
+import { BarcodeFormat, DecodeHintType } from "@zxing/library";
 import { supabaseBrowser } from "../lib/supabase";
 
 const initialForm = {
@@ -23,12 +25,94 @@ export default function ProductsPage() {
   const [form, setForm] = useState(initialForm);
   const [saving, setSaving] = useState(false);
   const [lookingUp, setLookingUp] = useState(false);
+  const [scanning, setScanning] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const lastLookupJan = useRef("");
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const readerRef = useRef<BrowserMultiFormatReader | null>(null);
+  const controlsRef = useRef<{ stop: () => void } | null>(null);
 
   const update = (key: keyof typeof initialForm, value: string) =>
     setForm((prev) => ({ ...prev, [key]: value }));
+
+  function stopScanner() {
+    try {
+      controlsRef.current?.stop();
+    } catch {}
+    controlsRef.current = null;
+    try {
+      readerRef.current?.reset();
+    } catch {}
+    readerRef.current = null;
+    const video = videoRef.current;
+    if (video?.srcObject instanceof MediaStream) {
+      video.srcObject.getTracks().forEach((track) => track.stop());
+      video.srcObject = null;
+    }
+    setScanning(false);
+  }
+
+  async function startScanner() {
+    if (scanning) return;
+
+    setError("");
+    setMessage("");
+    setScanning(true);
+
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error("この端末・ブラウザではカメラを利用できません。");
+      }
+
+      const hints = new Map<DecodeHintType, unknown>();
+      hints.set(DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.EAN_13]);
+      const reader = new BrowserMultiFormatReader(hints);
+      readerRef.current = reader;
+
+      const devices = await BrowserMultiFormatReader.listVideoInputDevices();
+      const backCamera = devices.find((device) =>
+        /back|rear|environment|背面|後面/i.test(device.label)
+      );
+      const deviceId = backCamera?.deviceId || devices[0]?.deviceId;
+
+      if (!deviceId) {
+        throw new Error("カメラが見つかりませんでした。");
+      }
+
+      if (!videoRef.current) {
+        throw new Error("カメラ画面を準備できませんでした。");
+      }
+
+      setMessage("📷 JANバーコードを枠の中に入れてください。");
+
+      controlsRef.current = await reader.decodeFromVideoDevice(
+        deviceId,
+        videoRef.current,
+        (result) => {
+          if (!result) return;
+          const jan = cleanJan(result.getText());
+          if (jan.length !== 13) return;
+
+          stopScanner();
+          lastLookupJan.current = "";
+          setForm((prev) => ({ ...prev, jan_code: jan }));
+          setMessage("✅ JANを読み取りました。商品情報を取得しています…");
+          void lookupByJan(jan);
+        }
+      );
+    } catch (scannerError) {
+      console.error("JANバーコード読取エラー:", scannerError);
+      stopScanner();
+      setError(
+        "カメラを起動できませんでした。iPhoneのカメラ権限と、Safariのサイト設定を確認してください。"
+      );
+    }
+  }
+
+  useEffect(() => {
+    return () => stopScanner();
+  }, []);
 
   async function lookupByJan(rawJan = form.jan_code) {
     const jan = cleanJan(rawJan);
@@ -164,7 +248,7 @@ export default function ProductsPage() {
 
         <section style={{ background: "#fff", borderRadius: 18, padding: 18, boxShadow: "0 2px 10px rgba(0,0,0,.05)" }}>
           <p style={{ marginTop: 0, color: "#6b7280" }}>
-            JANを入力すると、商品名・ブランド・カテゴリを自動取得します。Yahoo!側の「中古」などの不要な文言は登録用の商品名から除去します。
+            JANを入力すると商品情報を自動取得できます。カメラでJANバーコードを読み取ることもできます。
           </p>
 
           <form onSubmit={saveProduct}>
@@ -192,28 +276,70 @@ export default function ProductsPage() {
                   placeholder="13桁のJANコード"
                 />
               </label>
-              <button
-                type="button"
-                onClick={() => void lookupByJan()}
-                disabled={lookingUp || cleanJan(form.jan_code).length !== 13}
-                style={{
-                  marginTop: 9,
-                  width: "100%",
-                  border: 0,
-                  borderRadius: 11,
-                  padding: "13px 16px",
-                  background:
-                    lookingUp || cleanJan(form.jan_code).length !== 13
-                      ? "#d1d5db"
-                      : "#15803d",
-                  color: "#fff",
-                  fontWeight: 800,
-                  fontSize: 15,
-                }}
-              >
-                {lookingUp ? "🔎 商品情報を取得中…" : "🔎 JANから商品情報を自動取得"}
-              </button>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 9, marginTop: 9 }}>
+                <button
+                  type="button"
+                  onClick={() => void startScanner()}
+                  disabled={scanning || lookingUp}
+                  style={{
+                    border: 0,
+                    borderRadius: 11,
+                    padding: "13px 10px",
+                    background: scanning || lookingUp ? "#d1d5db" : "#111827",
+                    color: "#fff",
+                    fontWeight: 800,
+                    fontSize: 14,
+                  }}
+                >
+                  📷 JANをカメラで読取
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void lookupByJan()}
+                  disabled={lookingUp || cleanJan(form.jan_code).length !== 13}
+                  style={{
+                    border: 0,
+                    borderRadius: 11,
+                    padding: "13px 10px",
+                    background:
+                      lookingUp || cleanJan(form.jan_code).length !== 13
+                        ? "#d1d5db"
+                        : "#15803d",
+                    color: "#fff",
+                    fontWeight: 800,
+                    fontSize: 14,
+                  }}
+                >
+                  {lookingUp ? "🔎 取得中…" : "🔎 情報を取得"}
+                </button>
+              </div>
             </div>
+
+            {scanning && (
+              <div style={{ marginBottom: 18, padding: 12, borderRadius: 16, background: "#111827" }}>
+                <div style={{ position: "relative", overflow: "hidden", borderRadius: 12, background: "#000", aspectRatio: "16 / 9" }}>
+                  <video
+                    ref={videoRef}
+                    muted
+                    playsInline
+                    autoPlay
+                    style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                  />
+                  <div style={{ position: "absolute", left: "10%", right: "10%", top: "32%", height: "36%", border: "3px solid #fff", borderRadius: 12, boxShadow: "0 0 0 9999px rgba(0,0,0,.25)" }} />
+                  <div style={{ position: "absolute", left: 0, right: 0, bottom: 10, textAlign: "center", color: "#fff", fontWeight: 800, fontSize: 14, textShadow: "0 1px 3px #000" }}>
+                    JANバーコードを枠内へ
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={stopScanner}
+                  style={{ width: "100%", marginTop: 10, border: "1px solid #4b5563", borderRadius: 10, padding: "11px", background: "#fff", color: "#111827", fontWeight: 800 }}
+                >
+                  カメラを閉じる
+                </button>
+              </div>
+            )}
 
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 0 }}>
               <label style={fieldStyle}>SKU<input style={inputStyle} value={form.sku} onChange={(e) => update("sku", e.target.value)} placeholder="任意" /></label>
@@ -228,7 +354,7 @@ export default function ProductsPage() {
             {error && <div style={{ margin: "4px 0 12px", padding: 12, borderRadius: 10, background: "#fff1f2", color: "#b42318", fontWeight: 700 }}>{error}</div>}
             {message && <div style={{ margin: "4px 0 12px", padding: 12, borderRadius: 10, background: "#f0fdf4", color: "#166534", fontWeight: 700 }}>{message}</div>}
 
-            <button type="submit" disabled={saving || lookingUp} style={{ width: "100%", border: 0, borderRadius: 12, padding: "15px 18px", background: saving || lookingUp ? "#9ca3af" : "#111827", color: "#fff", fontSize: 16, fontWeight: 800 }}>
+            <button type="submit" disabled={saving || lookingUp || scanning} style={{ width: "100%", border: 0, borderRadius: 12, padding: "15px 18px", background: saving || lookingUp || scanning ? "#9ca3af" : "#111827", color: "#fff", fontSize: 16, fontWeight: 800 }}>
               {saving ? "登録中…" : "＋ 商品を登録する"}
             </button>
           </form>
