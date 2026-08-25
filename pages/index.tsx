@@ -50,8 +50,8 @@ export default function Home() {
       return false;
     };
 
-    // 商品管理の「履歴」は、その行の商品だけを表示する専用履歴画面へ直結させる。
-    // Dashboard.tsx 本体を大きく書き換えず、既存の編集・削除・一覧機能を壊さない。
+    // 商品管理の「履歴」は、商品名の完全一致ではなくJANコードから商品IDを特定する。
+    // 一覧表示では商品名セル内にJANも表示されるため、商品名に余計な表示情報が含まれていても安全に開ける。
     const bindProductHistoryButtons = () => {
       const main = document.querySelector("main");
       if (!main) return;
@@ -71,28 +71,50 @@ export default function Home() {
           if (!row) return;
 
           const cells = Array.from(row.querySelectorAll("td"));
-          const productName = (cells[0]?.textContent || "").trim();
-          if (!productName) return;
+          const rowText = (cells[0]?.textContent || "").trim();
+          if (!rowText) return;
 
           button.disabled = true;
           const originalText = button.textContent;
           button.textContent = "読込中…";
 
           try {
-            const { data, error } = await supabase
-              .from("products")
-              .select("id")
-              .eq("name", productName)
-              .limit(1)
-              .maybeSingle();
+            // 商品名セルに表示されている13桁JANを優先して商品IDを取得する。
+            const janMatches = rowText.match(/\d{13}/g) || [];
+            let productId: string | null = null;
 
-            if (error) throw error;
-            if (!data?.id) {
-              alert("この商品の履歴を開けませんでした。商品情報を確認してください。");
+            if (janMatches.length > 0) {
+              const jan = janMatches[janMatches.length - 1];
+              const { data, error } = await supabase
+                .from("products")
+                .select("id")
+                .eq("jan_code", jan)
+                .limit(1)
+                .maybeSingle();
+
+              if (error) throw error;
+              productId = data?.id ?? null;
+            }
+
+            // JANがない旧商品にも対応するため、最後に商品名完全一致をフォールバックとして残す。
+            if (!productId) {
+              const { data, error } = await supabase
+                .from("products")
+                .select("id")
+                .eq("name", rowText)
+                .limit(1)
+                .maybeSingle();
+
+              if (error) throw error;
+              productId = data?.id ?? null;
+            }
+
+            if (!productId) {
+              alert("この商品の履歴を開けませんでした。JANコードまたは商品情報を確認してください。");
               return;
             }
 
-            window.location.href = `/product-history?productId=${encodeURIComponent(data.id)}`;
+            window.location.href = `/product-history?productId=${encodeURIComponent(productId)}`;
           } catch (error) {
             console.error("商品履歴への移動に失敗:", error);
             alert("商品履歴を開けませんでした。もう一度お試しください。");
