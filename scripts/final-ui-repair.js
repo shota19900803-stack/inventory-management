@@ -29,7 +29,7 @@ if (!text.includes('const [purchaseProductSearch, setPurchaseProductSearch]')) {
     );
   }, [products, saleProductSearch]);
 
-${stateMarker}`;
+\${stateMarker}`;
   text = text.replace(stateMarker, block);
 } else if (!text.includes("const filteredPurchaseProducts")) {
   text = text.replace(
@@ -42,7 +42,7 @@ ${stateMarker}`;
     ? products.filter((product) => [product.name, product.jan_code, product.sku, product.model_number, product.brand, product.category].some((value) => String(value ?? "").toLowerCase().includes(saleProductSearch.trim().toLowerCase())))
     : products;
 
-${stateMarker}`
+\${stateMarker}`
   );
 }
 
@@ -59,6 +59,7 @@ function replaceFormField(tabMarker, nextLabelMarker, replacement, labelName) {
 }
 
 // Purchase: one search box + one product select + one JAN camera button.
+// Important: do not use nested ${...} template expressions here; this file itself uses template literals.
 const purchaseField = `                  <label>
                     商品*
                     <input
@@ -69,7 +70,7 @@ const purchaseField = `                  <label>
                       placeholder="商品名・JAN・SKU・型番・ブランドで検索"
                     />
                     <div style={{ marginTop: 6, fontSize: 12, color: "#6b7280" }}>
-                      {purchaseProductSearch.trim() ? `${filteredPurchaseProducts.length}件が該当` : `${products.length}件の商品から選択`}
+                      {purchaseProductSearch.trim() ? filteredPurchaseProducts.length + "件が該当" : products.length + "件の商品から選択"}
                     </div>
                     <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
                       <select
@@ -107,7 +108,7 @@ const saleField = `                  <label>
                       placeholder="商品名・JAN・SKU・型番・ブランドで検索"
                     />
                     <div style={{ marginTop: 6, fontSize: 12, color: "#6b7280" }}>
-                      {saleProductSearch.trim() ? `${filteredSaleProducts.length}件が該当` : `${products.length}件の商品から選択`}
+                      {saleProductSearch.trim() ? filteredSaleProducts.length + "件が該当" : products.length + "件の商品から選択"}
                     </div>
                     <select
                       style={{ ...inputStyle, marginTop: 6 }}
