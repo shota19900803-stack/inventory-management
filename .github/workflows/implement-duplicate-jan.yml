@@ -7,14 +7,4 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Apply patch via GitHub API
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          python3 -c 'from pathlib import Path; import base64; p=Path("components/Dashboard.tsx"); s=p.read_text(); marker="    const result = editingProductId"; insert=base64.b64decode("ICAgIC8vIOaWsOimj+WVhuWTgeeZu+mMsuaZguOAgeWQjOOBmEpBTuOBjOaXouOBq+eZu+mMsuOBleOCjOOBpuOBhOOCjOOBsOmHjeikh+eZu+mMsuOBm+OBmuOAgeaXouWtmOWVhuWTgeOCkumBuOaKnuOBl+OBn+eKtuaFi+OBp+S7leWFpeeZu+mMsueUu+mdouOBuOenu+WLleOBmeOCi+OAggogICAgaWYgKCFlZGl0aW5nUHJvZHVjdElkICYmIHBheWxvYWQuamFuX2NvZGUpIHsKICAgICAgY29uc3Qgbm9ybWFsaXplZEphbiA9IFN0cmluZyhwYXlsb2FkLmphbl9jb2RlKS5yZXBsYWNlKC9cRC9nLCAiIik7CiAgICAgIGNvbnN0IGV4aXN0aW5nID0gcHJvZHVjdHMuZmluZCgKICAgICAgICAocHJvZHVjdCkgPT4KICAgICAgICAgIFN0cmluZyhwcm9kdWN0Lmphbl9jb2RlID8/ICIiKS5yZXBsYWNlKC9cRC9nLCAiIikgPT09IG5vcm1hbGl6ZWRKYW4KICAgICAgKTsKCiAgICAgIGlmIChleGlzdGluZykgewogICAgICAgIHNldFNhdmluZyhmYWxzZSk7CiAgICAgICAgc2V0TWVzc2FnZSgKICAgICAgICAgIGDjgZPjga5KQU7jga/ml6LjgavnmbvpjLLmuIjjgb/jgafjgZnvvJrjgIwke2V4aXN0aW5nLm5hbWV944CNXG7ku5XlhaXnmbvpjLLnlLvpnaLjgpLplovjgY3jgb7jgZfjgZ/jgIJgCiAgICAgICAgKTsKICAgICAgICBzZXRQdXJjaGFzZUZvcm0oewogICAgICAgICAgLi4uaW5pdGlhbFB1cmNoYXNlRm9ybSwKICAgICAgICAgIHByb2R1Y3RfaWQ6IGV4aXN0aW5nLmlkLAogICAgICAgICAgdW5pdF9jb3N0OgogICAgICAgICAgICBleGlzdGluZy5jb3N0X3ByaWNlID09IG51bGwgPyAiIiA6IFN0cmluZyhleGlzdGluZy5jb3N0X3ByaWNlKSwKICAgICAgICB9KTsKICAgICAgICBzZXRUYWIoInB1cmNoYXNlcyIpOwogICAgICAgIHNldEVkaXRpbmdQcm9kdWN0SWQobnVsbCk7CiAgICAgICAgc2V0UHJvZHVjdEZvcm0oaW5pdGlhbFByb2R1Y3RGb3JtKTsKICAgICAgICB3aW5kb3cuc2Nyb2xsVG8oeyB0b3A6IDAsIGJlaGF2aW9yOiAic21vb3RoIiB9KTsKICAgICAgICByZXR1cm47CiAgICAgIH0KICAgIH0KCg==").decode(); 
-if "const normalizedJan = String(payload.jan_code)" not in s:
-  assert marker in s, "marker not found"; p.write_text(s.replace(marker, insert+marker, 1)); print("patched")
-else: print("already patched")'
-          sha=$(gh api repos/shota19900803-stack/inventory-management/contents/components/Dashboard.tsx --jq .sha)
-          content=$(base64 -w0 components/Dashboard.tsx)
-          gh api --method PUT repos/shota19900803-stack/inventory-management/contents/components/Dashboard.tsx -f message='Add duplicate JAN purchase flow' -f content="$content" -f sha="$sha" >/dev/null
+      - run: python3 .github/patch_duplicate_jan.py
