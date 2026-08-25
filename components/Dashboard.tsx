@@ -607,6 +607,33 @@ const salesMonthDiffRate =
           : Number(productForm.selling_price),
     };
 
+    // 新規商品登録時、同じJANが既に登録されていれば重複登録せず、既存商品を選択した状態で仕入登録画面へ移動する。
+    if (!editingProductId && payload.jan_code) {
+      const normalizedJan = String(payload.jan_code).replace(/\D/g, "");
+      const existing = products.find(
+        (product) =>
+          String(product.jan_code ?? "").replace(/\D/g, "") === normalizedJan
+      );
+
+      if (existing) {
+        setSaving(false);
+        setMessage(
+          `このJANは既に登録済みです：「${existing.name}」\n仕入登録画面を開きました。`
+        );
+        setPurchaseForm({
+          ...initialPurchaseForm,
+          product_id: existing.id,
+          unit_cost:
+            existing.cost_price == null ? "" : String(existing.cost_price),
+        });
+        setTab("purchases");
+        setEditingProductId(null);
+        setProductForm(initialProductForm);
+        window.scrollTo({ top: 0, behavior: "smooth" });
+        return;
+      }
+    }
+
     const result = editingProductId
       ? await supabase
           .from("products")
