@@ -29,12 +29,10 @@ if (!text.includes('const [purchaseProductSearch, setPurchaseProductSearch]')) {
     );
   }, [products, saleProductSearch]);
 
-\${stateMarker}`;
+` + stateMarker;
   text = text.replace(stateMarker, block);
 } else if (!text.includes("const filteredPurchaseProducts")) {
-  text = text.replace(
-    stateMarker,
-    `  const filteredPurchaseProducts = purchaseProductSearch.trim()
+  const block = `  const filteredPurchaseProducts = purchaseProductSearch.trim()
     ? products.filter((product) => [product.name, product.jan_code, product.sku, product.model_number, product.brand, product.category].some((value) => String(value ?? "").toLowerCase().includes(purchaseProductSearch.trim().toLowerCase())))
     : products;
 
@@ -42,8 +40,8 @@ if (!text.includes('const [purchaseProductSearch, setPurchaseProductSearch]')) {
     ? products.filter((product) => [product.name, product.jan_code, product.sku, product.model_number, product.brand, product.category].some((value) => String(value ?? "").toLowerCase().includes(saleProductSearch.trim().toLowerCase())))
     : products;
 
-\${stateMarker}`
-  );
+` + stateMarker;
+  text = text.replace(stateMarker, block);
 }
 
 function replaceFormField(tabMarker, nextLabelMarker, replacement, labelName) {
@@ -59,7 +57,6 @@ function replaceFormField(tabMarker, nextLabelMarker, replacement, labelName) {
 }
 
 // Purchase: one search box + one product select + one JAN camera button.
-// Important: do not use nested ${...} template expressions here; this file itself uses template literals.
 const purchaseField = `                  <label>
                     商品*
                     <input
@@ -135,8 +132,7 @@ const saleField = `                  <label>
 `;
 replaceFormField('{tab === "sales" && (', '                  <label>\n                    売上日', saleField, '商品*');
 
-// Purchase scanning needs a video element on the purchase tab. The old camera UI
-// was nested in the product form, so add a purchase-only shared modal at page level.
+// Purchase scanning needs a video element on the purchase tab.
 if (!text.includes("FINAL PURCHASE JAN SCANNER")) {
   const mainClose = text.lastIndexOf("</main>");
   if (mainClose < 0) throw new Error("Main closing tag was not found.");
@@ -156,7 +152,7 @@ if (!text.includes("FINAL PURCHASE JAN SCANNER")) {
   text = text.slice(0, mainClose) + scannerUi + text.slice(mainClose);
 }
 
-// Keep the existing product action buttons visible at the right edge on mobile.
+// Keep existing product action buttons visible at the right edge on mobile.
 text = text.replace(
   '<td style={{ padding: 10 }}>\n                            <div\n                              style={{\n                                display: "flex",\n                                gap: 6,\n                                flexWrap: "wrap",\n                              }}',
   '<td style={{ padding: 10, position: "sticky", right: 0, background: "#fff", zIndex: 1 }}>\n                            <div\n                              style={{\n                                display: "flex",\n                                gap: 6,\n                                flexWrap: "wrap",\n                              }}'
