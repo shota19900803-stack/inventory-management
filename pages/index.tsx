@@ -71,13 +71,13 @@ export default function Home() {
       for (const leaf of leaves) {
         if (leaf.children.length !== 0) continue;
 
-        const leafText = (leaf.textContent || "").replace(/\\s/g, "");
+        const leafText = (leaf.textContent || "").replace(/\s/g, "");
         if (!leafText.includes("在庫不足商品")) continue;
 
         let node: HTMLElement | null = leaf.parentElement;
         for (let depth = 0; node && depth < 12; depth += 1) {
-          const text = (node.textContent || "").replace(/\\s/g, "");
-          if (text.includes("在庫管理") && /\\d+件/.test(text)) {
+          const text = (node.textContent || "").replace(/\s/g, "");
+          if (text.includes("在庫管理") && /\d+件/.test(text)) {
             node.style.display = "none";
             node.setAttribute("data-mobile-low-stock-hidden", "true");
             return true;
@@ -116,6 +116,20 @@ export default function Home() {
           <SafeBoundary><SalesActionsRpc /></SafeBoundary>
         </>
       )}
+
+      <a
+        href="/products"
+        style={{
+          position: "fixed", left: "50%", bottom: 82, transform: "translateX(-50%)", zIndex: 1001,
+          display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8,
+          padding: "13px 22px", borderRadius: 999,
+          background: "#15803d", color: "#fff", textDecoration: "none",
+          fontWeight: 800, boxShadow: "0 8px 24px rgba(21,128,61,.28)",
+          whiteSpace: "nowrap",
+        }}
+      >
+        ＋ 商品登録
+      </a>
 
       <a
         href="/management"
