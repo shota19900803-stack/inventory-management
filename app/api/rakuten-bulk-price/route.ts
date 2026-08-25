@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
       url.searchParams.set("hits", "1");
       url.searchParams.set(
         "elements",
-        "productCode,productName,usedExcludeSalesMinPrice,salesMinPrice,usedExcludeSalesItemCount,salesItemCount"
+        "productCode,productName,usedExcludeSalesMinPrice,usedExcludeSalesItemCount,salesItemCount"
       );
 
       const response = await fetch(url, { cache: "no-store" });
@@ -56,10 +56,14 @@ export async function POST(request: NextRequest) {
         results.push({ jan, price: null, error: data?.error_description || data?.error || `HTTP ${response.status}` });
       } else {
         const item = Array.isArray(data?.items) ? data.items[0] : null;
-        const price = Number(item?.usedExcludeSalesMinPrice ?? item?.salesMinPrice ?? 0);
+        // 「中古を除く購入可能な最低価格」だけを新品相場として採用。
+        // 新品が存在しない場合は、中古を含む価格へフォールバックしない。
+        const rawPrice = item?.usedExcludeSalesMinPrice;
+        const price = Number(rawPrice ?? 0);
+        const hasNew = Number(item?.usedExcludeSalesItemCount ?? 0) > 0;
         results.push({
           jan,
-          price: Number.isFinite(price) && price > 0 ? price : null,
+          price: hasNew && Number.isFinite(price) && price > 0 ? price : null,
           productName: item?.productName ?? null,
           usedExcludeSalesItemCount: item?.usedExcludeSalesItemCount ?? null,
           salesItemCount: item?.salesItemCount ?? null,
