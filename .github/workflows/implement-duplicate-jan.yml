@@ -1,0 +1,110 @@
+name: implement-duplicate-jan
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/implement-duplicate-jan.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply duplicate JAN handling
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("components/Dashboard.tsx")
+          s = p.read_text()
+
+          marker = '''    const result = editingProductId
+      ? await supabase
+          .from("products")
+          .update(payload)
+          .eq("id", editingProductId)
+      : await supabase
+          .from("products")
+          .insert(payload);
+'''
+
+          insert = '''    // 新規商品登録時、同じJANが既に登録されていれば重複登録せず、
+    // 既存商品を選択した状態で仕入登録画面へ移動する。
+    if (!editingProductId && payload.jan_code) {
+      const normalizedJan = String(payload.jan_code).replace(/\\D/g, "");
+      const existing = products.find(
+        (product) =>
+          String(product.jan_code ?? "").replace(/\\D/g, "") === normalizedJan
+      );
+
+      if (existing) {
+        setSaving(false);
+        setMessage(
+          `このJANは既に登録済みです：「${existing.name}」\\n仕入登録画面を開きました。`
+        );
+        setPurchaseForm({
+          ...initialPurchaseForm,
+          product_id: existing.id,
+          unit_cost:
+            existing.cost_price == null
+              ? ""
+              : String(existing.cost_price),
+        });
+        setTab("purchases");
+        setEditingProductId(null);
+        setProductForm(initialProductForm);
+        window.scrollTo({ top: 0, behavior: "smooth" });
+        return;
+      }
+    }
+
+'''
+
+          if "const normalizedJan = String(payload.jan_code)" not in s:
+              if marker not in s:
+                  raise SystemExit("saveProduct marker not found")
+              s = s.replace(marker, insert + marker, 1)
+
+          # 商品一覧検索が既にある場合は何もしない。なければ追加する。
+          if "const [productSearch, setProductSearch]" not in s:
+              state_marker = '''  const [message, setMessage] = useState("");\n'''
+              state_insert = '''\n  const [productSearch, setProductSearch] = useState("");\n  const filteredProducts = useMemo(() => {\n    const keyword = productSearch.trim().toLowerCase();\n    if (!keyword) return products;\n    return products.filter((product) =>\n      [product.name, product.jan_code, product.sku, product.model_number].some((value) =>\n        String(value ?? "").toLowerCase().includes(keyword)\n      )\n    );\n  }, [products, productSearch]);\n'''
+              if state_marker not in s:
+                  raise SystemExit("product search state marker not found")
+              s = s.replace(state_marker, state_marker + state_insert, 1)
+
+          if "商品名・JAN・SKU・型番で検索" not in s:
+              heading = '''                <h2>商品一覧</h2>\n'''
+              heading_insert = '''                <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>\n                  <h2 style={{ margin: 0 }}>商品一覧</h2>\n                  <input\n                    style={{ ...inputStyle, maxWidth: 400 }}\n                    value={productSearch}\n                    onChange={(e) => setProductSearch(e.target.value)}\n                    placeholder="商品名・JAN・SKU・型番で検索"\n                  />\n                </div>\n'''
+              if heading not in s:
+                  raise SystemExit("product list heading marker not found")
+              s = s.replace(heading, heading_insert, 1)
+              s = s.replace("{products.map(\n                      (product) => (", "{filteredProducts.map(\n                      (product) => (", 1)
+
+          p.write_text(s)
+          PY
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add components/Dashboard.tsx
+          git diff --cached --check
+          if git diff --cached --quiet; then
+            echo "No Dashboard changes needed"
+          else
+            git commit -m "Handle duplicate JAN and product search"
+            git push
+          fi
+
+          rm -f .github/workflows/implement-duplicate-jan.yml
+          git add -A .github/workflows
+          if git diff --cached --quiet; then
+            echo "Workflow already removed"
+          else
+            git commit -m "Remove temporary implementation workflow"
+            git push
+          fi
