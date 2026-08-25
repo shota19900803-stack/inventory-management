@@ -1,5 +1,5 @@
 import dynamic from "next/dynamic";
-import { Component, useEffect, useState } from "react";
+import { Component, useEffect } from "react";
 
 const Dashboard = dynamic(() => import("../components/Dashboard"), {
   ssr: false,
@@ -24,9 +24,6 @@ const Dashboard = dynamic(() => import("../components/Dashboard"), {
   ),
 });
 
-const HistoryEditor = dynamic(() => import("../components/HistoryEditor"), { ssr: false });
-const SalesActionsRpc = dynamic(() => import("../components/SalesActionsRpc"), { ssr: false });
-
 class SafeBoundary extends Component<
   { children: React.ReactNode },
   { hasError: boolean }
@@ -48,11 +45,8 @@ class SafeBoundary extends Component<
 }
 
 export default function Home() {
-  const [desktopEnhancers, setDesktopEnhancers] = useState(false);
-
   useEffect(() => {
     const mobile = window.matchMedia("(max-width: 767px)").matches;
-    setDesktopEnhancers(!mobile);
 
     // iPhone版では「在庫不足商品」カードを表示しない。
     // PC版の既存表示には影響させない。
@@ -109,13 +103,6 @@ export default function Home() {
       <SafeBoundary>
         <Dashboard />
       </SafeBoundary>
-
-      {desktopEnhancers && (
-        <>
-          <SafeBoundary><HistoryEditor /></SafeBoundary>
-          <SafeBoundary><SalesActionsRpc /></SafeBoundary>
-        </>
-      )}
 
       <a
         href="/products"
