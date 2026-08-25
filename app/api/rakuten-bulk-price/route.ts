@@ -49,7 +49,7 @@ async function searchRakutenProduct(appId: string, accessKey: string, jan: strin
   url.searchParams.set("formatVersion", "2");
   url.searchParams.set("applicationId", appId);
   url.searchParams.set("productCode", jan);
-  url.searchParams.set("hits", "1");
+  // productCode(JAN)指定時は、hits等のサービス固有検索条件を併用しない。
   url.searchParams.set(
     "elements",
     "productCode,productName,productNo,brandName,itemCount,salesItemCount,usedExcludeCount,usedExcludeSalesItemCount,salesMinPrice,usedExcludeMinPrice,usedExcludeSalesMinPrice"
@@ -71,7 +71,6 @@ async function searchRakutenItems(
   url.searchParams.set("hits", "30");
   url.searchParams.set("sort", sort);
   url.searchParams.set("availability", "1");
-  // JAN検索は広めに拾い、後段の完全一致判定で商品を選ぶ。
   url.searchParams.set("field", "0");
   url.searchParams.set("purchaseType", "0");
   url.searchParams.set(
@@ -114,7 +113,6 @@ function chooseItem(items: any[], productName: string, brand: string, model: str
       const digits = original.replace(/\D/g, "");
       let score = 0;
 
-      // JANが商品名・説明文に入っていれば最優先。
       if (janN && digits.includes(janN)) score += 200;
       if (target && name === target) score += 120;
       if (target && name.includes(target)) score += 80;
@@ -216,7 +214,6 @@ export async function POST(request: NextRequest) {
           const newPrice = Number(item?.usedExcludeSalesMinPrice ?? 0);
           const newCount = Number(item?.usedExcludeSalesItemCount ?? 0);
 
-          // 購買可能件数がnull/0でも、楽天が新品最低価格を返していれば採用する。
           if (Number.isFinite(newPrice) && newPrice > 0) {
             results.push({
               jan,
