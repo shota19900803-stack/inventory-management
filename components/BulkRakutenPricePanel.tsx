@@ -7,6 +7,8 @@ type Product = {
   id: string;
   name: string;
   jan_code?: string | null;
+  model_number?: string | null;
+  brand?: string | null;
   stock_quantity?: number | null;
   cost_price?: number | null;
   rakuten_lowest_price?: number | null;
@@ -74,13 +76,20 @@ export default function BulkRakutenPricePanel({ products, visible }: { products:
     const checkedAt = new Date().toISOString();
 
     try {
-      // 5件ずつ処理。API側も1回最大5JANなので、429対策をしながら順番に取得する。
+      // 5件ずつ処理。API側も1回最大5商品なので、429対策をしながら順番に取得する。
       for (let i = 0; i < eligible.length; i += 5) {
         const chunk = eligible.slice(i, i + 5);
         const response = await fetch("/api/rakuten-bulk-price", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ jans: chunk.map((p) => p.jan_code) }),
+          body: JSON.stringify({
+            products: chunk.map((p) => ({
+              jan: p.jan_code,
+              name: p.name,
+              brand: p.brand,
+              model: p.model_number,
+            })),
+          }),
         });
 
         let data: any;
@@ -104,7 +113,6 @@ export default function BulkRakutenPricePanel({ products, visible }: { products:
             failed += 1;
             failedDetails.push(`${product.name}（${jan}）：${result?.error || "新品価格なし"}`);
           } else {
-            // select("id")を付けて、DBに実際に1行更新されたことまで確認する。
             const { data: updatedRows, error } = await supabase
               .from("products")
               .update({
