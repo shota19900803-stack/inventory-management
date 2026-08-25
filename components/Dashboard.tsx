@@ -133,6 +133,10 @@ export default function Dashboard() {
 
   const [editingProductId, setEditingProductId] =
     useState<string | null>(null);
+  const [editingPurchaseId, setEditingPurchaseId] =
+    useState<string | null>(null);
+  const [editingSaleId, setEditingSaleId] =
+    useState<string | null>(null);
 
   const [productForm, setProductForm] =
   useState(initialProductForm);
@@ -151,6 +155,7 @@ const scannerRef = useRef<BrowserMultiFormatReader | null>(null);
 const controlsRef = useRef<any>(null);
 
 const [scanning, setScanning] = useState(false);
+const [scannerTarget, setScannerTarget] = useState<"product" | "purchase">("product");
 const [scannerMessage, setScannerMessage] =
   useState("カメラを起動しています…");
   const productMap = useMemo(
@@ -238,7 +243,8 @@ setLoading(false);
 useEffect(() => {
   loadAll();
 }, []);
-const startJanScanner = () => {
+const startJanScanner = (target: "product" | "purchase" = "product") => {
+  setScannerTarget(target);
   setScannerMessage(
     "カメラを起動しています…"
   );
@@ -312,14 +318,18 @@ useEffect(() => {
               );
 
               if (jan.length === 13) {
-                setProductForm((prev) => ({
-                  ...prev,
-                  jan_code: jan,
-                }));
-
-                setScannerMessage(
-                  `読み取り成功：${jan}`
-                );
+                if (scannerTarget === "purchase") {
+                  const matched = products.find((product) => String(product.jan_code ?? "").replace(/\D/g, "") === jan);
+                  if (matched) {
+                    setPurchaseForm((prev) => ({ ...prev, product_id: matched.id }));
+                    setScannerMessage(`読み取り成功：${jan} → ${matched.name}`);
+                  } else {
+                    setScannerMessage(`JAN ${jan} の商品が商品管理にありません。先に商品登録してください。`);
+                  }
+                } else {
+                  setProductForm((prev) => ({ ...prev, jan_code: jan }));
+                  setScannerMessage(`読み取り成功：${jan}`);
+                }
 
                 controls.stop();
                 controlsRef.current = null;
@@ -651,6 +661,7 @@ const salesMonthDiffRate =
   }
 
   function openPurchase(productId = "") {
+    setEditingPurchaseId(null);
     setPurchaseForm({
       ...initialPurchaseForm,
       product_id: productId,
@@ -680,7 +691,32 @@ const salesMonthDiffRate =
     setTab("sales");
   }
 
-  async function savePurchase(
+  function editPurchase(purchase: Purchase) {
+  setEditingPurchaseId(purchase.id);
+  setPurchaseForm({ product_id: purchase.product_id, purchase_date: purchase.purchase_date, supplier: purchase.supplier ?? "", unit_cost: String(purchase.unit_cost ?? ""), quantity: String(purchase.quantity ?? 1), notes: purchase.notes ?? "" });
+  setTab("purchases");
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+async function deletePurchase(purchase: Purchase) {
+  if (!window.confirm(`この仕入を削除しますか？\n\n数量：${purchase.quantity}個\n合計：${yen(purchase.total_cost)}`)) return;
+  setSaving(true); setMessage("");
+  try {
+    const product = products.find((item) => item.id === purchase.product_id);
+    const currentStock = Number(product?.stock_quantity ?? 0);
+    if (!product) throw new Error("商品が見つかりません。");
+    if (currentStock < Number(purchase.quantity)) throw new Error(`現在庫が${purchase.quantity}個未満のため削除できません。先に関連する売上を確認してください。`);
+    const { error: de } = await supabase.from("purchase_history").delete().eq("id", purchase.id);
+    if (de) throw de;
+    const { error: se } = await supabase.from("products").update({ stock_quantity: currentStock - Number(purchase.quantity) }).eq("id", purchase.product_id);
+    if (se) throw se;
+    setMessage("仕入を削除し、在庫も調整しました。");
+    await loadAll();
+  } catch (error: any) { setMessage(`仕入削除エラー：${error?.message || String(error)}`); }
+  finally { setSaving(false); }
+}
+
+async function savePurchase(
   event: React.FormEvent
 ) {
   event.preventDefault();
@@ -709,6 +745,23 @@ const salesMonthDiffRate =
   setMessage("");
 
   try {
+    if (editingPurchaseId) {
+      const original = purchases.find((item) => item.id === editingPurchaseId);
+      if (!original) throw new Error("編集対象の仕入が見つかりません。");
+      if (original.product_id !== purchaseForm.product_id) throw new Error("仕入商品の変更は安全のためできません。商品を変更する場合は削除して新しく登録してください。");
+      const product = products.find((item) => item.id === original.product_id);
+      if (!product) throw new Error("商品が見つかりません。");
+      const delta = quantity - Number(original.quantity);
+      const currentStock = Number(product.stock_quantity || 0);
+      if (currentStock + delta < 0) throw new Error("数量を減らすと在庫がマイナスになるため更新できません。");
+      const { error: ue } = await supabase.from("purchase_history").update({ purchase_date: purchaseForm.purchase_date, supplier: purchaseForm.supplier.trim() || null, unit_cost: unitCost, quantity, total_cost: unitCost * quantity, notes: purchaseForm.notes.trim() || null }).eq("id", editingPurchaseId);
+      if (ue) throw ue;
+      const { error: se } = await supabase.from("products").update({ stock_quantity: currentStock + delta }).eq("id", original.product_id);
+      if (se) throw se;
+      setMessage("仕入を更新し、在庫も調整しました。");
+      setEditingPurchaseId(null); setPurchaseForm(initialPurchaseForm); await loadAll(); return;
+    }
+
     const { data, error } = await supabase.rpc(
       "register_purchase",
       {
@@ -902,6 +955,38 @@ async function saveSale(
     setSaving(false);
 
   }
+}
+
+function editSale(sale: Sale) {
+  if (sale.is_cancelled) { setMessage("取消済みの売上は編集できません。"); return; }
+  setEditingSaleId(sale.id);
+  setSaleForm({ product_id: sale.product_id, sale_date: sale.sale_date, sales_channel: sale.sales_channel ?? "楽天市場", order_number: sale.order_number ?? "", unit_price: String(sale.unit_price ?? ""), unit_cost: String(sale.unit_cost ?? ""), quantity: String(sale.quantity ?? 1), notes: sale.notes ?? "" });
+  setTab("sales");
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+async function deleteSale(sale: Sale) { await cancelSale(sale); }
+
+async function updateSale(event: React.FormEvent) {
+  event.preventDefault(); if (!editingSaleId) return;
+  const original = sales.find((item) => item.id === editingSaleId);
+  if (!original) { setMessage("編集対象の売上が見つかりません。"); return; }
+  if (original.product_id !== saleForm.product_id) { setMessage("売上商品の変更は安全のためできません。取消して新しく登録してください。"); return; }
+  const unitPrice = Number(saleForm.unit_price || 0), unitCost = Number(saleForm.unit_cost || 0), quantity = Number(saleForm.quantity || 0);
+  if (unitPrice < 0 || unitCost < 0 || quantity <= 0) { setMessage("販売価格・原価・数量を正しく入力してください。"); return; }
+  setSaving(true); setMessage("");
+  try {
+    const product = products.find((item) => item.id === original.product_id);
+    if (!product) throw new Error("商品が見つかりません。");
+    const currentStock = Number(product.stock_quantity || 0), delta = Number(original.quantity) - quantity;
+    if (currentStock + delta < 0) throw new Error(`在庫が不足しています。現在庫：${currentStock}個`);
+    const { error: ue } = await supabase.from("sales_history").update({ sale_date: saleForm.sale_date, sales_channel: saleForm.sales_channel.trim() || null, order_number: saleForm.order_number.trim() || null, unit_price: unitPrice, unit_cost: unitCost, quantity, total_sales: unitPrice * quantity, total_cost: unitCost * quantity, gross_profit: (unitPrice - unitCost) * quantity, notes: saleForm.notes.trim() || null }).eq("id", editingSaleId);
+    if (ue) throw ue;
+    const { error: se } = await supabase.from("products").update({ stock_quantity: currentStock + delta }).eq("id", original.product_id);
+    if (se) throw se;
+    setMessage("売上を更新し、在庫も調整しました。"); setEditingSaleId(null); setSaleForm(initialSaleForm); await loadAll();
+  } catch (error: any) { setMessage(`売上更新エラー：${error?.message || String(error)}`); }
+  finally { setSaving(false); }
 }
 
 async function cancelSale(sale: any) {
@@ -1584,6 +1669,13 @@ async function cancelSale(sale: any) {
       取消済み
     </span>
   ) : (
+    <button
+      type="button"
+      onClick={() => editSale(sale)}
+      style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #d1d5db", background: "#fff", color: "#111827", fontWeight: 700, cursor: "pointer", marginRight: 6 }}
+    >
+      編集
+    </button>
     <button
       type="button"
       onClick={() => cancelSale(sale)}
@@ -2319,7 +2411,7 @@ async function cancelSale(sale: any) {
         {tab === "purchases" && (
           <>
             <section style={cardStyle}>
-              <h2>仕入を登録</h2>
+              <h2>{editingPurchaseId ? "仕入を編集" : "仕入を登録"}</h2>
 
               <p
                 style={{
@@ -2340,8 +2432,9 @@ async function cancelSale(sale: any) {
                 >
                   <label>
                     商品*
+                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                     <select
-                      style={inputStyle}
+                      style={{ ...inputStyle, flex: 1 }}
                       value={
                         purchaseForm.product_id
                       }
@@ -2368,6 +2461,8 @@ async function cancelSale(sale: any) {
                         )
                       )}
                     </select>
+                    <button type="button" onClick={() => startJanScanner("purchase")} style={{ border: "none", background: "#15803d", color: "#fff", borderRadius: 10, padding: "12px 14px", fontWeight: 800, whiteSpace: "nowrap" }}>📷 JAN</button>
+                    </div>
                   </label>
 
                   <label>
@@ -2492,10 +2587,11 @@ async function cancelSale(sale: any) {
                     fontWeight: 700,
                   }}
                 >
-                  {saving
-                    ? "登録中…"
-                    : "仕入を登録する"}
+                  {saving ? "保存中…" : editingPurchaseId ? "仕入を更新する" : "仕入を登録する"}
                 </button>
+                {editingPurchaseId && (
+                  <button type="button" onClick={() => { setEditingPurchaseId(null); setPurchaseForm(initialPurchaseForm); }} style={{ marginTop: 15, marginLeft: 8, border: "1px solid #d1d5db", background: "#fff", padding: "12px 18px", borderRadius: 10, fontWeight: 700 }}>キャンセル</button>
+                )}
               </form>
             </section>
 
@@ -2534,6 +2630,7 @@ async function cancelSale(sale: any) {
                       <th style={{ padding: 10 }}>
                         合計
                       </th>
+                      <th style={{ padding: 10 }}>操作</th>
                     </tr>
                   </thead>
 
@@ -2573,9 +2670,11 @@ async function cancelSale(sale: any) {
                           </td>
 
                           <td style={{ padding: 10 }}>
-                            {yen(
-                              purchase.total_cost
-                            )}
+                            {yen(purchase.total_cost)}
+                          </td>
+                          <td style={{ padding: 10, whiteSpace: "nowrap" }}>
+                            <button type="button" onClick={() => editPurchase(purchase)} style={{ marginRight: 6 }}>編集</button>
+                            <button type="button" onClick={() => void deletePurchase(purchase)} style={{ color: "#dc2626" }}>削除</button>
                           </td>
                         </tr>
                       ))}
@@ -2589,7 +2688,7 @@ async function cancelSale(sale: any) {
         {tab === "sales" && (
           <>
             <section style={cardStyle}>
-              <h2>売上を登録</h2>
+              <h2>{editingSaleId ? "売上を編集" : "売上を登録"}</h2>
 
               <p
                 style={{
@@ -2599,7 +2698,7 @@ async function cancelSale(sale: any) {
                 販売価格とその時点の原価を記録して、粗利を自動計算します。
               </p>
 
-              <form onSubmit={saveSale}>
+              <form onSubmit={editingSaleId ? updateSale : saveSale}>
                 <div
                   style={{
                     display: "grid",
@@ -2858,10 +2957,11 @@ async function cancelSale(sale: any) {
                     fontWeight: 700,
                   }}
                 >
-                  {saving
-                    ? "登録中…"
-                    : "売上を登録する"}
+                  {saving ? "保存中…" : editingSaleId ? "売上を更新する" : "売上を登録する"}
                 </button>
+                {editingSaleId && (
+                  <button type="button" onClick={() => { setEditingSaleId(null); setSaleForm(initialSaleForm); }} style={{ marginTop: 15, marginLeft: 8, border: "1px solid #d1d5db", background: "#fff", padding: "12px 18px", borderRadius: 10, fontWeight: 700 }}>キャンセル</button>
+                )}
               </form>
             </section>
 
@@ -2900,6 +3000,7 @@ async function cancelSale(sale: any) {
                       <th style={{ padding: 10 }}>
                         粗利
                       </th>
+                      <th style={{ padding: 10 }}>操作</th>
                     </tr>
                   </thead>
 
@@ -2934,20 +3035,12 @@ async function cancelSale(sale: any) {
                             )}
                           </td>
 
-                          <td
-                            style={{
-                              padding: 10,
-                              fontWeight: 700,
-                              color:
-                                sale.gross_profit >=
-                                0
-                                  ? "#15803d"
-                                  : "#dc2626",
-                            }}
-                          >
-                            {yen(
-                              sale.gross_profit
-                            )}
+                          <td style={{ padding: 10, fontWeight: 700, color: sale.gross_profit >= 0 ? "#15803d" : "#dc2626" }}>
+                            {yen(sale.gross_profit)}
+                          </td>
+                          <td style={{ padding: 10, whiteSpace: "nowrap" }}>
+                            <button type="button" onClick={() => editSale(sale)} style={{ marginRight: 6 }}>編集</button>
+                            <button type="button" onClick={() => void deleteSale(sale)} style={{ color: "#dc2626" }}>取消/削除</button>
                           </td>
                         </tr>
                       ))}
