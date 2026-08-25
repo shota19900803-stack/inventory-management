@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/router";
+import { BrowserMultiFormatReader } from "@zxing/browser";
 import { supabaseBrowser } from "../lib/supabase";
 
 type Product = {
@@ -56,6 +57,12 @@ export default function SalesOrderPage() {
   const [lines, setLines] = useState<SaleLine[]>([newLine()]);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
+  const [productSearch, setProductSearch] = useState("");
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const [scannerLineId, setScannerLineId] = useState<string | null>(null);
+  const [scannerMessage, setScannerMessage] = useState("JANコードをカメラに映してください");
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const scannerControlsRef = useRef<any>(null);
 
   useEffect(() => {
     Promise.all([
@@ -69,6 +76,14 @@ export default function SalesOrderPage() {
   }, []);
 
   const productMap = useMemo(() => Object.fromEntries(products.map((p) => [p.id, p])), [products]);
+
+  const filteredProducts = useMemo(() => {
+    const keyword = productSearch.trim().toLowerCase();
+    if (!keyword) return products;
+    return products.filter((product) =>
+      [product.name, product.jan_code, product.sku].some((value) => String(value ?? "").toLowerCase().includes(keyword))
+    );
+  }, [products, productSearch]);
 
   const totals = useMemo(() => {
     const sales = lines.reduce((sum, line) => sum + Number(line.unit_price || 0) * Number(line.quantity || 0), 0);
@@ -96,6 +111,62 @@ export default function SalesOrderPage() {
     updateLine(lineId, { product_id: purchase.product_id, unit_cost: String(purchase.unit_cost) });
   }
 
+  function openScanner(lineId: string) {
+    setScannerLineId(lineId);
+    setScannerMessage("JANコードをカメラに映してください");
+    setScannerOpen(true);
+  }
+
+  function closeScanner() {
+    try { scannerControlsRef.current?.stop(); } catch {}
+    scannerControlsRef.current = null;
+    setScannerOpen(false);
+    setScannerLineId(null);
+  }
+
+  useEffect(() => {
+    if (!scannerOpen || !scannerLineId) return;
+    let cancelled = false;
+    const reader = new BrowserMultiFormatReader();
+
+    const start = async () => {
+      try {
+        if (!videoRef.current) return;
+        const controls = await reader.decodeFromConstraints(
+          { video: { facingMode: { ideal: "environment" } } },
+          videoRef.current,
+          (result) => {
+            if (cancelled || !result) return;
+            const jan = result.getText().replace(/\D/g, "");
+            if (jan.length !== 13) return;
+            const matched = products.find((product) => String(product.jan_code ?? "").replace(/\D/g, "") === jan);
+            if (!matched) {
+              setScannerMessage(`JAN ${jan} の商品が見つかりません。商品管理から先に登録してください。`);
+              return;
+            }
+            selectProduct(matched.id, scannerLineId);
+            setScannerMessage(`読み取り成功：${matched.name}`);
+            controls.stop();
+            scannerControlsRef.current = null;
+            window.setTimeout(() => { if (!cancelled) closeScanner(); }, 350);
+          }
+        );
+        if (cancelled) controls.stop();
+        else scannerControlsRef.current = controls;
+      } catch (error) {
+        console.error("JANスキャンエラー", error);
+        if (!cancelled) setScannerMessage("カメラを起動できませんでした。ブラウザのカメラ許可を確認してください。");
+      }
+    };
+
+    start();
+    return () => {
+      cancelled = true;
+      try { scannerControlsRef.current?.stop(); } catch {}
+      scannerControlsRef.current = null;
+    };
+  }, [scannerOpen, scannerLineId, products]);
+
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     if (saving) return;
@@ -113,6 +184,13 @@ export default function SalesOrderPage() {
 
     if (items.some((item) => !item.product_id || item.quantity <= 0 || item.unit_price < 0 || item.unit_cost < 0)) {
       return setMessage("各商品の商品・価格・数量を正しく入力してください。");
+    }
+
+    const stockProblems = items
+      .map((item) => ({ item, product: productMap[item.product_id] }))
+      .filter(({ item, product }) => !product || Number(product.stock_quantity || 0) < item.quantity);
+    if (stockProblems.length) {
+      return setMessage(stockProblems.map(({ item, product }) => `${product?.name || "商品"}：在庫 ${Number(product?.stock_quantity || 0)}個 / 売上 ${item.quantity}個`).join("\n") + "\n在庫不足のため登録できません。");
     }
 
     setSaving(true);
@@ -134,6 +212,7 @@ export default function SalesOrderPage() {
       setOrderNumber("");
       setShippingCost("0");
       setNotes("");
+      setProductSearch("");
     } catch (error: any) {
       setMessage(`注文登録エラー：${error?.message || String(error)}`);
     } finally {
@@ -148,19 +227,22 @@ export default function SalesOrderPage() {
           <div>
             <div style={{ fontSize: 13, letterSpacing: 2, color: "#6b7280", fontWeight: 800 }}>SALES ORDER</div>
             <h1 style={{ margin: "4px 0 0", fontSize: 32 }}>💰 注文単位で売上登録</h1>
-            <p style={{ margin: "6px 0 0", color: "#6b7280" }}>1注文に複数商品をまとめて登録できます。同じ商品を原価違いで複数行にすることも可能です。</p>
+            <p style={{ margin: "6px 0 0", color: "#6b7280" }}>1注文に複数商品をまとめて登録。JAN読み取り・原価履歴選択・原価違いの同一商品にも対応。</p>
           </div>
-          <button type="button" onClick={() => router.push("/")} style={{ padding: "11px 16px", borderRadius: 10, border: "1px solid #d1d5db", background: "#fff", fontWeight: 800 }}>← 在庫管理へ</button>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button type="button" onClick={() => router.push("/product-history")} style={secondaryButtonStyle}>📦 商品履歴</button>
+            <button type="button" onClick={() => router.push("/")} style={secondaryButtonStyle}>← 在庫管理</button>
+          </div>
         </div>
 
-        {message && <div style={{ marginBottom: 18, padding: 14, borderRadius: 10, background: "#ecfdf5", border: "1px solid #bbf7d0", color: "#166534", whiteSpace: "pre-wrap" }}>{message}</div>}
+        {message && <div style={{ marginBottom: 18, padding: 14, borderRadius: 10, background: message.includes("エラー") || message.includes("不足") ? "#fff7ed" : "#ecfdf5", border: "1px solid #bbf7d0", color: "#166534", whiteSpace: "pre-wrap" }}>{message}</div>}
 
         <form onSubmit={submit}>
-          <section style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 14, padding: 20, marginBottom: 16 }}>
+          <section style={cardStyle}>
             <h2 style={{ marginTop: 0 }}>注文情報</h2>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 14 }}>
               <label>注文番号*
-                <input value={orderNumber} onChange={(e) => setOrderNumber(e.target.value)} placeholder="例：RKT-12345" style={inputStyle} />
+                <input autoFocus value={orderNumber} onChange={(e) => setOrderNumber(e.target.value)} placeholder="例：RKT-12345" style={inputStyle} />
               </label>
               <label>販売先
                 <input value={channel} onChange={(e) => setChannel(e.target.value)} style={inputStyle} />
@@ -174,13 +256,17 @@ export default function SalesOrderPage() {
             </div>
           </section>
 
-          <section style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 14, padding: 20, marginBottom: 16 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 14 }}>
+          <section style={cardStyle}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
               <div>
                 <h2 style={{ margin: 0 }}>商品明細</h2>
-                <div style={{ marginTop: 5, color: "#6b7280", fontSize: 13 }}>同じ商品をもう1行追加して、原価を変えることもできます。</div>
+                <div style={{ marginTop: 5, color: "#6b7280", fontSize: 13 }}>JANをピッ → 商品自動選択 → 原価を選択 → 数量入力、の流れで登録できます。</div>
               </div>
               <button type="button" onClick={() => setLines((prev) => [...prev, newLine()])} style={addButtonStyle}>＋ 商品を追加</button>
+            </div>
+
+            <div style={{ marginBottom: 14 }}>
+              <input value={productSearch} onChange={(e) => setProductSearch(e.target.value)} placeholder="🔎 商品名・JAN・SKUで絞り込み（商品を選ぶ時に便利）" style={inputStyle} />
             </div>
 
             {lines.map((line, index) => {
@@ -189,18 +275,22 @@ export default function SalesOrderPage() {
               const linePurchases = purchases.filter((purchase) => purchase.product_id === line.product_id);
               const lineSales = Number(line.unit_price || 0) * Number(line.quantity || 0);
               const lineCost = Number(line.unit_cost || 0) * Number(line.quantity || 0);
+              const insufficient = !!selectedProduct && Number(line.quantity || 0) > stock;
 
               return (
-                <div key={line.id} style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 15, marginBottom: 12, background: index % 2 === 0 ? "#fff" : "#fafafa" }}>
+                <div key={line.id} style={{ border: insufficient ? "2px solid #f59e0b" : "1px solid #e5e7eb", borderRadius: 12, padding: 15, marginBottom: 12, background: index % 2 === 0 ? "#fff" : "#fafafa" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
                     <strong>商品 {index + 1}</strong>
-                    {lines.length > 1 && <button type="button" onClick={() => setLines((prev) => prev.filter((item) => item.id !== line.id))} style={{ border: "none", background: "#fff1f2", color: "#b42318", borderRadius: 8, padding: "7px 10px", fontWeight: 800 }}>削除</button>}
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button type="button" onClick={() => openScanner(line.id)} style={scanButtonStyle}>📷 JANを読む</button>
+                      {lines.length > 1 && <button type="button" onClick={() => setLines((prev) => prev.filter((item) => item.id !== line.id))} style={deleteButtonStyle}>削除</button>}
+                    </div>
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 2fr) repeat(3, minmax(130px, 1fr))", gap: 12 }}>
                     <label>商品*
                       <select value={line.product_id} onChange={(e) => selectProduct(e.target.value, line.id)} style={inputStyle}>
                         <option value="">商品を選択</option>
-                        {products.map((product) => <option key={product.id} value={product.id}>{product.name}（在庫 {Number(product.stock_quantity || 0)}）</option>)}
+                        {filteredProducts.map((product) => <option key={product.id} value={product.id}>{product.name}（JAN {product.jan_code || "—"} / 在庫 {Number(product.stock_quantity || 0)}）</option>)}
                       </select>
                     </label>
                     <label>販売単価
@@ -215,11 +305,12 @@ export default function SalesOrderPage() {
                   </div>
 
                   {line.product_id && (
-                    <div style={{ marginTop: 12, padding: 12, background: "#f8fafc", borderRadius: 10, fontSize: 13 }}>
+                    <div style={{ marginTop: 12, padding: 12, background: insufficient ? "#fff7ed" : "#f8fafc", borderRadius: 10, fontSize: 13 }}>
                       <div style={{ display: "flex", gap: 14, flexWrap: "wrap", color: "#475569" }}>
                         <span>現在庫：<strong>{stock}個</strong></span>
                         <span>明細売上：<strong>{yen(lineSales)}</strong></span>
                         <span>明細原価：<strong>{yen(lineCost)}</strong></span>
+                        {insufficient && <strong style={{ color: "#b45309" }}>⚠ 在庫不足</strong>}
                       </div>
                       {linePurchases.length > 0 && (
                         <div style={{ marginTop: 10 }}>
@@ -240,7 +331,7 @@ export default function SalesOrderPage() {
             })}
           </section>
 
-          <section style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 14, padding: 20, marginBottom: 16 }}>
+          <section style={cardStyle}>
             <label>メモ
               <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} style={{ ...inputStyle, resize: "vertical" }} placeholder="必要なら注文単位のメモを入力" />
             </label>
@@ -257,11 +348,32 @@ export default function SalesOrderPage() {
           </section>
         </form>
       </div>
+
+      {scannerOpen && (
+        <div style={modalOverlayStyle} role="dialog" aria-modal="true">
+          <div style={modalStyle}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+              <div><h2 style={{ margin: 0 }}>📷 JANコード読み取り</h2><p style={{ margin: "6px 0 0", color: "#6b7280", fontSize: 13 }}>{scannerMessage}</p></div>
+              <button type="button" onClick={closeScanner} style={secondaryButtonStyle}>閉じる</button>
+            </div>
+            <div style={{ marginTop: 14, background: "#000", borderRadius: 12, overflow: "hidden", aspectRatio: "16 / 9" }}>
+              <video ref={videoRef} autoPlay muted playsInline style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+            </div>
+            <div style={{ marginTop: 12, color: "#6b7280", fontSize: 13 }}>商品バーコードを中央に映してください。読み取り成功すると自動でこの明細に入ります。</div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
 
+const cardStyle: React.CSSProperties = { background: "#fff", border: "1px solid #e5e7eb", borderRadius: 14, padding: 20, marginBottom: 16 };
 const inputStyle: React.CSSProperties = { width: "100%", boxSizing: "border-box", marginTop: 6, padding: "11px 12px", border: "1px solid #d1d5db", borderRadius: 9, background: "#fff", color: "#111827", fontSize: 14 };
 const addButtonStyle: React.CSSProperties = { border: "none", background: "#15803d", color: "#fff", borderRadius: 9, padding: "10px 14px", fontWeight: 800 };
+const scanButtonStyle: React.CSSProperties = { border: "none", background: "#0f766e", color: "#fff", borderRadius: 8, padding: "8px 11px", fontWeight: 800 };
+const deleteButtonStyle: React.CSSProperties = { border: "none", background: "#fff1f2", color: "#b42318", borderRadius: 8, padding: "8px 10px", fontWeight: 800 };
+const secondaryButtonStyle: React.CSSProperties = { padding: "10px 13px", borderRadius: 9, border: "1px solid #d1d5db", background: "#fff", fontWeight: 800, color: "#111827" };
 const summaryLabel: React.CSSProperties = { color: "#9ca3af", fontSize: 13 };
 const summaryValue: React.CSSProperties = { display: "block", marginTop: 4, fontSize: 23 };
+const modalOverlayStyle: React.CSSProperties = { position: "fixed", inset: 0, zIndex: 2000, background: "rgba(0,0,0,.65)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18 };
+const modalStyle: React.CSSProperties = { width: "min(760px, 100%)", background: "#fff", borderRadius: 16, padding: 18, boxSizing: "border-box" };
