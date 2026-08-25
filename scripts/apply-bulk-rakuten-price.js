@@ -14,29 +14,26 @@ if (!text.includes(importLine)) {
 }
 
 const productsMarker = '{tab === "products" && (';
-const purchasesMarker = '{tab === "purchases" && (';
 
 if (!text.includes("<BulkRakutenPricePanel products={products}")) {
   const productsStart = text.indexOf(productsMarker);
-  const purchasesStart = text.indexOf(purchasesMarker, productsStart + productsMarker.length);
-  if (productsStart === -1 || purchasesStart === -1) {
-    throw new Error("Product/purchase tab markers not found for bulk Rakuten panel.");
+  if (productsStart === -1) {
+    throw new Error("Product tab marker not found for bulk Rakuten panel.");
   }
 
-  text =
-    text.slice(0, productsStart) +
-    productsMarker +
-    `\n    <>\n      <BulkRakutenPricePanel products={products} visible={tab === "products"} />` +
-    text.slice(productsStart + productsMarker.length);
+  // The products tab already owns its React fragment: `{... && ( <> ... </> )}`.
+  // Insert the panel inside that existing fragment instead of creating another
+  // fragment/closing pair, which previously produced invalid JSX at build time.
+  const fragmentStart = text.indexOf("<>", productsStart + productsMarker.length);
+  if (fragmentStart === -1) {
+    throw new Error("Product tab fragment not found for bulk Rakuten panel.");
+  }
 
-  // purchasesMarker shifted after insertion; find it again and close the fragment before it.
-  const shiftedPurchasesStart = text.indexOf(purchasesMarker, productsStart + productsMarker.length);
-  if (shiftedPurchasesStart === -1) throw new Error("Purchase tab marker disappeared after insertion.");
+  const insertAt = fragmentStart + "<>".length;
+  const ui = `
+            <BulkRakutenPricePanel products={products} visible={tab === "products"} />`;
 
-  text =
-    text.slice(0, shiftedPurchasesStart) +
-    "\n    </>}\n\n" +
-    text.slice(shiftedPurchasesStart);
+  text = text.slice(0, insertAt) + ui + text.slice(insertAt);
 }
 
 fs.writeFileSync(file, text, "utf8");
