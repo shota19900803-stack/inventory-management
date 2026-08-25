@@ -12,8 +12,7 @@ text = text.replace(
 );
 
 // Repair the product JAN field if repeated scanner UI was inserted inside
-// the label. Keep one clean JAN input + scanner button, and keep the shared
-// scanner display outside this field.
+// the label. Keep one clean JAN input + scanner button.
 const janStart = text.indexOf("                  <label>\n  JANコード");
 const skuStart = janStart >= 0
   ? text.indexOf("                  <label>\n                    SKU", janStart)
@@ -24,6 +23,30 @@ if (janStart >= 0 && skuStart > janStart) {
   text = text.slice(0, janStart) + janBlock + text.slice(skuStart);
 }
 
+// ZXing 0.2.x is valid at runtime, but the static class import can surface
+// as a type-only value error in the Next.js TypeScript build. Use a dynamic
+// import and an explicit runtime constructor instead.
+text = text.replace(
+  'import { BrowserMultiFormatReader } from "@zxing/browser";\n',
+  ""
+);
+
+text = text.replace(
+  'const scannerRef = useRef<BrowserMultiFormatReader | null>(null);',
+  'const scannerRef = useRef<any>(null);'
+);
+
+text = text.replace(
+  '      const reader =\n        new BrowserMultiFormatReader();',
+  '      const ZXingBrowser = await import("@zxing/browser");\n      const Reader = ZXingBrowser.BrowserMultiFormatReader as any;\n      const reader = new Reader();'
+);
+
+// If an earlier repair left the old constructor on one line, fix that too.
+text = text.replace(
+  '      const reader = new BrowserMultiFormatReader();',
+  '      const ZXingBrowser = await import("@zxing/browser");\n      const Reader = ZXingBrowser.BrowserMultiFormatReader as any;\n      const reader = new Reader();'
+);
+
 // If the monthly sales cell still contains the unwrapped pair, fix it using
 // a narrower exact replacement as a second safety net.
 text = text.replace(
@@ -32,4 +55,4 @@ text = text.replace(
 );
 
 fs.writeFileSync(file, text, "utf8");
-console.log("Applied final TSX syntax repair.");
+console.log("Applied final TSX syntax + ZXing repair.");
