@@ -22,25 +22,28 @@ class SafeBoundary extends Component<{ children: React.ReactNode }, { hasError: 
 
 export default function Home() {
   useEffect(() => {
-    const mobile = window.matchMedia("(max-width: 767px)").matches;
-    if (!mobile) return;
+    // 「在庫不足商品」カードはPC・iPhoneとも表示しない。
+    // Dashboard側の表示が変わっても、描画後に確実に非表示にする。
     let stopped = false;
     let observer: MutationObserver | null = null;
+
     const hideLowStockCard = () => {
       if (stopped) return true;
       const main = document.querySelector("main");
       if (!main) return false;
+
       const leaves = Array.from(main.querySelectorAll("*"));
       for (const leaf of leaves) {
         if (leaf.children.length !== 0) continue;
         const leafText = (leaf.textContent || "").replace(/\s/g, "");
         if (!leafText.includes("在庫不足商品")) continue;
+
         let node: HTMLElement | null = leaf.parentElement;
         for (let depth = 0; node && depth < 12; depth += 1) {
           const text = (node.textContent || "").replace(/\s/g, "");
           if (text.includes("在庫管理") && /\d+件/.test(text)) {
             node.style.display = "none";
-            node.setAttribute("data-mobile-low-stock-hidden", "true");
+            node.setAttribute("data-low-stock-hidden", "true");
             return true;
           }
           node = node.parentElement;
@@ -48,6 +51,7 @@ export default function Home() {
       }
       return false;
     };
+
     const run = () => hideLowStockCard();
     run();
     const timer = window.setInterval(run, 700);
