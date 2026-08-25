@@ -27,7 +27,6 @@ export default function ProductsPage() {
   function stopScanner() {
     try { controlsRef.current?.stop(); } catch {}
     controlsRef.current = null;
-    try { readerRef.current?.stopContinuousDecode(); } catch {}
     readerRef.current = null;
     try { streamRef.current?.getTracks().forEach((track) => track.stop()); } catch {}
     streamRef.current = null;
@@ -40,9 +39,6 @@ export default function ProductsPage() {
     setScanning(false);
   }
 
-  // iPhone/Safariでは「カメラを開く→video要素を探す→デバイス一覧を取得」の順番だと
-  // カメラが一瞬で閉じることがあるため、video要素を常にDOMに置き、
-  // ボタン押下のユーザー操作から直接getUserMediaを開始する。
   async function startScanner() {
     if (scannerStartingRef.current || scanning || lookingUp) return;
     scannerStartingRef.current = true;
