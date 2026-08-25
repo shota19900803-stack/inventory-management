@@ -23,6 +23,15 @@ if (janStart >= 0 && skuStart > janStart) {
   text = text.slice(0, janStart) + janBlock + text.slice(skuStart);
 }
 
+// React's button onClick receives a MouseEvent. startJanScanner expects an
+// optional scanner target string, so passing the function directly causes
+// TypeScript to treat the click event as the target. Always pass the target
+// explicitly through a callback.
+text = text.replace(
+  /onClick=\{startJanScanner\}/g,
+  'onClick={() => startJanScanner("product")}'
+);
+
 // ZXing 0.2.x is valid at runtime, but the static class import can surface
 // as a type-only value error in the Next.js TypeScript build. Use a dynamic
 // import and an explicit runtime constructor instead.
@@ -50,9 +59,9 @@ text = text.replace(
 // If the monthly sales cell still contains the unwrapped pair, fix it using
 // a narrower exact replacement as a second safety net.
 text = text.replace(
-  /(<button\s+type="button"\s+onClick=\{\(\) => editSale\(sale\)\}[\s\S]*?<\/button>)\n\s*(<button\s+type="button"\s+onClick=\{\(\) => cancelSale\(sale\)\}[\s\S]*?<\/button>)/,
+  /(<button\s+type="button"\s+onClick=\{\(\) => editSale\(sale\)\}[\s\S]*?<\/button>)\n\s*(<button\s+type="button"\s+onClick=\{\(\) => cancelSale\(sale\)[\s\S]*?<\/button>)/,
   "<>$1$2</>"
 );
 
 fs.writeFileSync(file, text, "utf8");
-console.log("Applied final TSX syntax + ZXing repair.");
+console.log("Applied final TSX syntax + ZXing + JAN event typing repair.");
