@@ -5,6 +5,8 @@ permissions:
 jobs:
   patch:
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
       - run: python3 .github/patch_duplicate_jan.py
