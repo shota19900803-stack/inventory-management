@@ -103,7 +103,12 @@ function SalesShippingPanel({ target }: Props) {
     const form = target.closest("form");
     if (!form) return;
 
-    const onSubmit = async () => {
+    const readValue = (labelText: string) => {
+      const label = Array.from(form.querySelectorAll("label")).find((el) => (el.textContent || "").trim().startsWith(labelText));
+      return (label?.querySelector("input") as HTMLInputElement | null)?.value?.trim() || "";
+    };
+
+    const onSubmit = () => {
       if (amount < 0) return;
 
       const productSelect = Array.from(form.querySelectorAll("select")).find((el) =>
@@ -112,21 +117,33 @@ function SalesShippingPanel({ target }: Props) {
 
       const productId = productSelect?.value || "";
       const dateInput = form.querySelector('input[type="date"]') as HTMLInputElement | null;
+      const priceInput = Array.from(form.querySelectorAll("input[type=number]"))[0] as HTMLInputElement | undefined;
+      const quantityInput = Array.from(form.querySelectorAll("input[type=number]"))[2] as HTMLInputElement | undefined;
+      const orderNumber = readValue("注文番号");
+
       if (!productId || !dateInput) return;
 
       const saleDate = dateInput.value;
+      const unitPrice = Number(priceInput?.value || 0);
+      const quantity = Number(quantityInput?.value || 1);
 
       window.setTimeout(async () => {
         const { data } = await supabaseBrowser
           .from("sales_history")
-          .select("id,total_sales,total_cost,quantity")
+          .select("id,total_sales,total_cost,quantity,unit_price,order_number,created_at")
           .eq("product_id", productId)
           .eq("sale_date", saleDate)
           .eq("is_cancelled", false)
           .order("created_at", { ascending: false })
-          .limit(20);
+          .limit(30);
 
-        const matched = (data ?? [])[0] as any;
+        const rows = (data ?? []) as any[];
+        const matched = rows.find((row) =>
+          Number(row.quantity || 0) === quantity &&
+          Number(row.unit_price || 0) === unitPrice &&
+          (orderNumber ? String(row.order_number || "").trim() === orderNumber : true),
+        ) ?? rows[0];
+
         if (!matched) return;
 
         const grossProfit = Number(matched.total_sales || 0) - Number(matched.total_cost || 0) - amount;
@@ -135,7 +152,7 @@ function SalesShippingPanel({ target }: Props) {
           .from("sales_history")
           .update({ shipping_cost: amount, gross_profit: grossProfit })
           .eq("id", matched.id);
-      }, 900);
+      }, 1000);
     };
 
     form.addEventListener("submit", onSubmit, true);
