@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { supabaseBrowser } from "../lib/supabase";
 import { PREFECTURES, CARRIERS, findRegion, type ShippingRateCard, SAGAWA, YUPACK, NEKOPOS, COMPACT, SAGAWA_SIZES, YUPACK_SIZES, YAMATO_SERVICES } from "../lib/shippingRates";
@@ -15,6 +15,14 @@ const SIZE_OPTIONS: Record<string, string[]> = {
 const YAMATO_COMPACT_BOX_COST = 70;
 const SIZE_STORAGE_KEY = "inventory-sales-shipping-size";
 
+type SaleSnapshot = {
+  productId: string;
+  date: string;
+  price: number;
+  quantity: number;
+  order: string;
+};
+
 function readSavedSize(carrier: string, sizes: string[]): string {
   if (!sizes.length) return "";
   try {
@@ -30,9 +38,7 @@ function saveSize(carrier: string, size: string) {
     const saved = JSON.parse(sessionStorage.getItem(SIZE_STORAGE_KEY) || "{}") as Record<string, string>;
     saved[carrier] = size;
     sessionStorage.setItem(SIZE_STORAGE_KEY, JSON.stringify(saved));
-  } catch {
-    // sessionStorage may be unavailable; the current selection still works.
-  }
+  } catch {}
 }
 
 function fallbackAmount(carrier: string, service: string, prefecture: string, size: string): number {
@@ -100,6 +106,7 @@ function SalesShippingPanel({ target }: Props) {
   const [manualAmount, setManualAmount] = useState("");
   const [appliedMessage, setAppliedMessage] = useState("");
   const [walletBalance, setWalletBalance] = useState<number | null>(null);
+  const snapshotRef = useRef<SaleSnapshot | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -129,11 +136,8 @@ function SalesShippingPanel({ target }: Props) {
   }, [services, service]);
 
   useEffect(() => {
-    if (sizes.length) {
-      setSize((current) => sizes.includes(current) ? current : readSavedSize(carrier, sizes));
-    } else {
-      setSize("");
-    }
+    if (sizes.length) setSize((current) => sizes.includes(current) ? current : readSavedSize(carrier, sizes));
+    else setSize("");
   }, [carrier, sizes]);
 
   useEffect(() => {
@@ -165,64 +169,104 @@ function SalesShippingPanel({ target }: Props) {
     let pending = false;
     let timer: number | null = null;
 
-    const read = (labelText: string) => {
+    const readInput = (labelText: string) => {
       const label = Array.from(form.querySelectorAll("label")).find((el) => (el.textContent || "").trim().startsWith(labelText));
       return (label?.querySelector("input") as HTMLInputElement | null)?.value?.trim() || "";
     };
 
-    const syncAfterSave = async () => {
-      if (pending || amount < 0) return;
-      pending = true;
-      const productSelect = Array.from(form.querySelectorAll("select")).find((el) => Array.from(el.options).some((o) => o.textContent === "商品を選択")) as HTMLSelectElement | undefined;
-      const productId = productSelect?.value || "";
-      const date = (form.querySelector('input[type="date"]') as HTMLInputElement | null)?.value || "";
-      const price = Number((Array.from(form.querySelectorAll('input[type="number"]'))[0] as HTMLInputElement | undefined)?.value || 0);
-      const quantity = Number((Array.from(form.querySelectorAll('input[type="number"]'))[2] as HTMLInputElement | undefined)?.value || 1);
-      const order = read("注文番号");
-      if (!productId || !date) { pending = false; return; }
+    const captureSnapshot = () => {
+      const productSelect = Array.from(form.querySelectorAll("select")).find((el) => Array.from(el.options).some((o) => (o.textContent || "").trim() === "商品を選択")) as HTMLSelectElement | undefined;
+      const numbers = Array.from(form.querySelectorAll('input[type="number"]')) as HTMLInputElement[];
+      const snapshot: SaleSnapshot = {
+        productId: productSelect?.value || "",
+        date: (form.querySelector('input[type="date"]') as HTMLInputElement | null)?.value || "",
+        price: Number(numbers[0]?.value || 0),
+        quantity: Number(numbers[2]?.value || 1),
+        order: readInput("注文番号"),
+      };
+      snapshotRef.current = snapshot;
+      return snapshot;
+    };
 
-      for (let attempt = 0; attempt < 12; attempt++) {
-        const { data, error } = await supabaseBrowser.from("sales_history").select("id,total_sales,total_cost,quantity,unit_price,order_number,shipping_cost,shipping_carrier,shipping_service,shipping_material_cost,created_at").eq("product_id", productId).eq("sale_date", date).eq("is_cancelled", false).order("created_at", { ascending: false }).limit(50);
-        if (error) break;
+    const syncAfterSave = async (snapshot: SaleSnapshot | null) => {
+      if (pending || !snapshot?.productId || !snapshot.date) return;
+      pending = true;
+      const shipping = Math.max(0, Number(amount || 0));
+
+      for (let attempt = 0; attempt < 15; attempt++) {
+        const { data, error } = await supabaseBrowser
+          .from("sales_history")
+          .select("id,total_sales,total_cost,quantity,unit_price,order_number,shipping_cost,shipping_carrier,shipping_service,shipping_size,shipping_material_cost,shipping_wallet_transaction_id,created_at")
+          .eq("product_id", snapshot.productId)
+          .eq("sale_date", snapshot.date)
+          .eq("is_cancelled", false)
+          .order("created_at", { ascending: false })
+          .limit(50);
+
+        if (error) {
+          setAppliedMessage(`⚠️ 送料の保存に失敗：${error.message}`);
+          break;
+        }
+
         const rows = (data ?? []) as any[];
-        const matched = rows.find((r) => Number(r.quantity || 0) === quantity && Number(r.unit_price || 0) === price && (order ? String(r.order_number || "").trim() === order : true));
+        const matched = rows.find((r) =>
+          Number(r.quantity || 0) === snapshot.quantity &&
+          Number(r.unit_price || 0) === snapshot.price &&
+          (snapshot.order ? String(r.order_number || "").trim() === snapshot.order : true)
+        );
+
         if (matched) {
-          const already = Number(matched.shipping_cost || 0) === Math.max(0, Number(amount || 0)) && String(matched.shipping_carrier || "") === carrier && String(matched.shipping_service || "") === service && Number(matched.shipping_material_cost || 0) === materialCost;
+          const already =
+            Number(matched.shipping_cost || 0) === shipping &&
+            String(matched.shipping_carrier || "") === carrier &&
+            String(matched.shipping_service || "") === service &&
+            String(matched.shipping_size || "") === size &&
+            Number(matched.shipping_material_cost || 0) === materialCost;
+
           if (!already) {
             const { data: syncData, error: syncError } = await supabaseBrowser.rpc("sync_yamato_shipping_wallet", {
               p_sale_id: matched.id,
               p_carrier: carrier,
               p_service: service,
-              p_size: size,
-              p_shipping_cost: Math.max(0, Number(amount || 0)),
+              p_size: size || null,
+              p_shipping_cost: shipping,
               p_material_cost: materialCost,
             });
+
             if (syncError || syncData?.success === false) {
               console.error("送料同期エラー", syncError || syncData);
               setAppliedMessage(`⚠️ 送料の保存に失敗：${syncError?.message || syncData?.message || "確認してください"}`);
             } else {
-              setAppliedMessage(`登録完了：送料 ¥${Number(amount || 0).toLocaleString()} ＋ 専用BOX ¥${materialCost.toLocaleString()} を反映しました。`);
-              if (syncData?.balance != null) setWalletBalance(Number(syncData.balance)); else loadWallet();
+              setAppliedMessage(`登録完了：送料 ¥${shipping.toLocaleString()} ＋ 専用BOX ¥${materialCost.toLocaleString()} を反映しました。`);
+              if (syncData?.balance != null) setWalletBalance(Number(syncData.balance));
+              else loadWallet();
             }
           }
           break;
         }
-        await new Promise((resolve) => window.setTimeout(resolve, 350));
+        await new Promise((resolve) => window.setTimeout(resolve, 300));
       }
       pending = false;
     };
 
-    const onSubmit = () => {
+    const scheduleSync = () => {
+      const snapshot = snapshotRef.current ?? captureSnapshot();
       if (timer) window.clearTimeout(timer);
-      timer = window.setTimeout(() => { void syncAfterSave(); }, 250);
+      timer = window.setTimeout(() => { void syncAfterSave(snapshot); }, 600);
     };
+
+    const onSubmit = () => {
+      captureSnapshot();
+      scheduleSync();
+    };
+
     const onClick = (event: Event) => {
       const button = event.target as HTMLElement | null;
       if (!button) return;
       const text = (button.textContent || "").trim();
       if (text.includes("売上を登録") || text.includes("売上を更新する")) {
-        if (timer) window.clearTimeout(timer);
-        timer = window.setTimeout(() => { void syncAfterSave(); }, 250);
+        captureSnapshot();
+        scheduleSync();
       }
     };
 
