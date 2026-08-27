@@ -8,7 +8,11 @@ export default function QuickActions() {
     const hideLegacyShippingButton = () => {
       if (disposed) return;
       const buttons = Array.from(document.querySelectorAll("button"));
-      const target = buttons.find((button) => (button.textContent || "").trim() === "🚚 送料自動計算");
+      const target = buttons.find(
+        (button) =>
+          !button.closest("[data-quick-actions]") &&
+          (button.textContent || "").trim() === "🚚 送料自動計算"
+      );
       if (target) {
         target.setAttribute("data-legacy-shipping-button", "true");
         target.style.display = "none";
@@ -25,7 +29,9 @@ export default function QuickActions() {
 
   const openShippingCalculator = () => {
     const button = Array.from(document.querySelectorAll("button")).find(
-      (item) => (item.textContent || "").trim() === "🚚 送料自動計算"
+      (item) =>
+        !item.closest("[data-quick-actions]") &&
+        (item.textContent || "").trim() === "🚚 送料自動計算"
     ) as HTMLButtonElement | undefined;
     if (button) button.click();
   };
@@ -45,6 +51,7 @@ export default function QuickActions() {
 
   return (
     <section
+      data-quick-actions
       style={{
         position: "fixed",
         top: 158,
