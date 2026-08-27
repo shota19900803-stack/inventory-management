@@ -26,25 +26,23 @@ const SIZE_OPTIONS: Record<string, string[]> = {
   "郵便局": [...YUPACK_SIZES],
 };
 
+const YAMATO_COMPACT_BOX_COST = 70;
+
 function fallbackAmount(carrier: string, service: string, prefecture: string, size: string): number {
   const region = findRegion(prefecture, carrier);
   if (!region) return 0;
-
   if (carrier === "佐川急便") {
     const index = SAGAWA_SIZES.indexOf(size);
     return index >= 0 ? Number(SAGAWA[region]?.[index] ?? 0) : 0;
   }
-
   if (carrier === "郵便局") {
     const index = YUPACK_SIZES.indexOf(size);
     return index >= 0 ? Number(YUPACK[region]?.[index] ?? 0) : 0;
   }
-
   if (carrier === "クロネコヤマト") {
     if (service === "ネコポス") return Number(NEKOPOS[region] ?? 0);
     if (service === "宅急便コンパクト") return Number(COMPACT[region] ?? 0);
   }
-
   return 0;
 }
 
@@ -112,6 +110,7 @@ function SalesShippingPanel({ target }: Props) {
   const [size, setSize] = useState("60");
   const [manualAmount, setManualAmount] = useState("");
   const [appliedMessage, setAppliedMessage] = useState("");
+  const [walletBalance, setWalletBalance] = useState<number | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -122,6 +121,20 @@ function SalesShippingPanel({ target }: Props) {
       .order("sort_order")
       .then(({ data }) => {
         if (active) setCards((data ?? []) as ShippingRateCard[]);
+      });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    supabaseBrowser
+      .from("shipping_wallets")
+      .select("balance")
+      .eq("carrier", "クロネコヤマト")
+      .eq("active", true)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (active) setWalletBalance(data?.balance == null ? null : Number(data.balance));
       });
     return () => { active = false; };
   }, []);
@@ -146,7 +159,6 @@ function SalesShippingPanel({ target }: Props) {
       setManualAmount(String(Math.round(amount)));
       setAppliedMessage(`送料 ¥${Math.round(amount).toLocaleString()} を反映しました。`);
     };
-
     window.addEventListener("shipping-calculator-apply", onApply);
     return () => window.removeEventListener("shipping-calculator-apply", onApply);
   }, []);
@@ -155,11 +167,13 @@ function SalesShippingPanel({ target }: Props) {
     () => cards.find((c) => c.carrier === carrier && c.service === service && c.region === region) ?? null,
     [cards, carrier, service, region],
   );
-
   const dbAmount = Number(dbCard?.rates[size] ?? dbCard?.rates.default ?? 0);
   const defaultAmount = fallbackAmount(carrier, service, prefecture, size);
   const autoAmount = dbAmount > 0 ? dbAmount : defaultAmount;
   const amount = manualAmount === "" ? autoAmount : Number(manualAmount);
+  const isYamatoCompact = carrier === "クロネコヤマト" && service === "宅急便コンパクト";
+  const materialCost = isYamatoCompact ? YAMATO_COMPACT_BOX_COST : 0;
+  const walletDebit = Math.max(0, Number(amount || 0)) + materialCost;
 
   useEffect(() => {
     const form = target.closest("form");
@@ -172,7 +186,6 @@ function SalesShippingPanel({ target }: Props) {
 
     const onSubmit = () => {
       if (amount < 0) return;
-
       const productSelect = Array.from(form.querySelectorAll("select")).find((el) =>
         Array.from(el.options).some((option) => option.textContent === "商品を選択"),
       ) as HTMLSelectElement | undefined;
@@ -205,17 +218,29 @@ function SalesShippingPanel({ target }: Props) {
         ) ?? rows[0];
         if (!matched) return;
 
-        const grossProfit = Number(matched.total_sales || 0) - Number(matched.total_cost || 0) - amount;
-        await supabaseBrowser
-          .from("sales_history")
-          .update({ shipping_cost: amount, gross_profit: grossProfit })
-          .eq("id", matched.id);
+        const { data: syncData, error: syncError } = await supabaseBrowser.rpc("sync_yamato_shipping_wallet", {
+          p_sale_id: matched.id,
+          p_carrier: carrier,
+          p_service: service,
+          p_size: size,
+          p_shipping_cost: Math.max(0, Number(amount || 0)),
+          p_material_cost: materialCost,
+        });
+
+        if (syncError || syncData?.success === false) {
+          console.error("ヤマト残高同期エラー", syncError || syncData);
+          setAppliedMessage(`⚠️ ヤマト残高への反映に失敗：${syncError?.message || syncData?.message || "確認してください"}`);
+          return;
+        }
+
+        if (syncData?.balance != null) setWalletBalance(Number(syncData.balance));
+        setAppliedMessage(`登録完了：送料 ¥${Number(amount || 0).toLocaleString()} ＋ 専用BOX ¥${materialCost.toLocaleString()} をヤマト残高から反映しました。`);
       }, 1000);
     };
 
     form.addEventListener("submit", onSubmit, true);
     return () => form.removeEventListener("submit", onSubmit, true);
-  }, [target, amount]);
+  }, [target, amount, carrier, service, size, materialCost]);
 
   return createPortal(
     <section
@@ -269,11 +294,18 @@ function SalesShippingPanel({ target }: Props) {
       <div style={{ marginTop: 14, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <div style={{ color: "#64748b", fontSize: 13 }}>
           {autoAmount ? `自動計算：¥${autoAmount.toLocaleString()}` : "送料設定が見つかりません"}
-          {appliedMessage && <div style={{ color: "#047857", fontWeight: 700, marginTop: 4 }}>{appliedMessage}</div>}
+          {isYamatoCompact && <div style={{ marginTop: 4 }}>＋ 専用BOX：¥{YAMATO_COMPACT_BOX_COST.toLocaleString()}（1発送につき）</div>}
+          {appliedMessage && <div style={{ color: appliedMessage.startsWith("⚠️") ? "#b45309" : "#047857", fontWeight: 700, marginTop: 4 }}>{appliedMessage}</div>}
         </div>
-        <strong style={{ fontSize: 24, color: "#0369a1" }}>送料 ¥{Number(amount || 0).toLocaleString()}</strong>
+        <div style={{ textAlign: "right" }}>
+          <strong style={{ display: "block", fontSize: 24, color: "#0369a1" }}>送料 ¥{Number(amount || 0).toLocaleString()}</strong>
+          {isYamatoCompact && <span style={{ color: "#475569", fontSize: 12 }}>ヤマト残高減少予定 ¥{walletDebit.toLocaleString()}</span>}
+          {walletBalance != null && carrier === "クロネコヤマト" && <span style={{ display: "block", color: "#047857", fontSize: 12, fontWeight: 800 }}>現在のヤマト残高 ¥{walletBalance.toLocaleString()}</span>}
+        </div>
       </div>
-      <div style={{ marginTop: 10, color: "#475569", fontSize: 12 }}>登録後の粗利は「売上 − 原価 − 送料」で計算します。</div>
+      <div style={{ marginTop: 10, color: "#475569", fontSize: 12 }}>
+        登録後の粗利は「売上 − 原価 − 送料 − 専用BOX代」で計算します。宅急便コンパクトは1発送につき専用BOX代70円もヤマト残高から自動減算します。
+      </div>
     </section>,
     target,
   );
