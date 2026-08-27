@@ -14,7 +14,7 @@ const saveEnd = nextFunction >= 0 ? nextFunction : source.length;
 let saveBlock = source.slice(saveStart, saveEnd);
 
 // 売上登録成功後に月次集計へ戻る古い処理を、必ず売上登録タブへ戻す処理に統一する。
-saveBlock = saveBlock.replace(/setTab\(\s*[\"']dashboard[\"']\s*\)\s*;?/g, 'setTab("sales");');
+saveBlock = saveBlock.replace(/setTab\(\s*["']dashboard["']\s*\)\s*;?/g, 'setTab("sales");');
 
 const navigationMarker = "// FINAL: stay on sales tab after sale registration";
 
@@ -24,14 +24,14 @@ if (resetLoadPattern.test(saveBlock)) {
   saveBlock = saveBlock.replace(resetLoadPattern, (match) => {
     const loadPos = match.lastIndexOf("await loadAll();");
     const beforeLoad = match.slice(0, loadPos);
-    return `${beforeLoad}await loadAll();\n\n    ${navigationMarker}\n    setTab("sales");\n    if (typeof window !== "undefined") {\n      const restoreSaleView = () => {\n        try { document.activeElement?.blur(); } catch {}\n        window.scrollTo({ top: 0, left: 0, behavior: "auto" });\n      };\n      requestAnimationFrame(restoreSaleView);\n      window.setTimeout(restoreSaleView, 50);\n      window.setTimeout(restoreSaleView, 200);\n    }`;
+    return `${beforeLoad}await loadAll();\n\n    ${navigationMarker}\n    setTab("sales");\n    if (typeof window !== "undefined") {\n      const restoreSaleView = () => {\n        try {\n          const activeEl = document.activeElement;\n          if (activeEl instanceof HTMLElement) {\n            activeEl.blur();\n          }\n        } catch {}\n        window.scrollTo({ top: 0, left: 0, behavior: "auto" });\n      };\n      requestAnimationFrame(restoreSaleView);\n      window.setTimeout(restoreSaleView, 50);\n      window.setTimeout(restoreSaleView, 200);\n    }`;
   });
 } else if (!saveBlock.includes(navigationMarker)) {
   // reset/load の書式が変わった場合でも、saveSale の最後の loadAll の直後へ注入する。
   const loadIndex = saveBlock.lastIndexOf("await loadAll();");
   if (loadIndex >= 0) {
     const insertAt = loadIndex + "await loadAll();".length;
-    saveBlock = saveBlock.slice(0, insertAt) + `\n\n    ${navigationMarker}\n    setTab("sales");\n    if (typeof window !== "undefined") {\n      const restoreSaleView = () => {\n        try { document.activeElement?.blur(); } catch {}\n        window.scrollTo({ top: 0, left: 0, behavior: "auto" });\n      };\n      requestAnimationFrame(restoreSaleView);\n      window.setTimeout(restoreSaleView, 50);\n      window.setTimeout(restoreSaleView, 200);\n    }` + saveBlock.slice(insertAt);
+    saveBlock = saveBlock.slice(0, insertAt) + `\n\n    ${navigationMarker}\n    setTab("sales");\n    if (typeof window !== "undefined") {\n      const restoreSaleView = () => {\n        try {\n          const activeEl = document.activeElement;\n          if (activeEl instanceof HTMLElement) {\n            activeEl.blur();\n          }\n        } catch {}\n        window.scrollTo({ top: 0, left: 0, behavior: "auto" });\n      };\n      requestAnimationFrame(restoreSaleView);\n      window.setTimeout(restoreSaleView, 50);\n      window.setTimeout(restoreSaleView, 200);\n    }` + saveBlock.slice(insertAt);
   } else {
     throw new Error("sale registration loadAll block was not found.");
   }
