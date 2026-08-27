@@ -13,6 +13,27 @@ const SIZE_OPTIONS: Record<string, string[]> = {
   "郵便局": [...YUPACK_SIZES],
 };
 const YAMATO_COMPACT_BOX_COST = 70;
+const SIZE_STORAGE_KEY = "inventory-sales-shipping-size";
+
+function readSavedSize(carrier: string, sizes: string[]): string {
+  if (!sizes.length) return "";
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(SIZE_STORAGE_KEY) || "{}") as Record<string, string>;
+    return saved[carrier] && sizes.includes(saved[carrier]) ? saved[carrier] : sizes[0];
+  } catch {
+    return sizes[0];
+  }
+}
+
+function saveSize(carrier: string, size: string) {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(SIZE_STORAGE_KEY) || "{}") as Record<string, string>;
+    saved[carrier] = size;
+    sessionStorage.setItem(SIZE_STORAGE_KEY, JSON.stringify(saved));
+  } catch {
+    // sessionStorage may be unavailable; the current selection still works.
+  }
+}
 
 function fallbackAmount(carrier: string, service: string, prefecture: string, size: string): number {
   const region = findRegion(prefecture, carrier);
@@ -100,12 +121,24 @@ function SalesShippingPanel({ target }: Props) {
   const region = findRegion(prefecture, carrier);
 
   useEffect(() => {
-    if (!services.includes(service)) setService(services[0] ?? "");
+    if (!services.includes(service)) {
+      setService(services[0] ?? "");
+      setManualAmount("");
+      setAppliedMessage("");
+    }
   }, [services, service]);
+
   useEffect(() => {
-    if (sizes.length && !sizes.includes(size)) setSize(sizes[0]);
-    if (!sizes.length && size !== "") setSize("");
-  }, [sizes, size]);
+    if (sizes.length) {
+      setSize((current) => sizes.includes(current) ? current : readSavedSize(carrier, sizes));
+    } else {
+      setSize("");
+    }
+  }, [carrier, sizes]);
+
+  useEffect(() => {
+    if (sizes.length && size && sizes.includes(size)) saveSize(carrier, size);
+  }, [carrier, size, sizes]);
 
   useEffect(() => {
     const onApply = (event: Event) => {
@@ -211,7 +244,7 @@ function SalesShippingPanel({ target }: Props) {
         <label>配送先都道府県<select value={prefecture} onChange={(e) => { setPrefecture(e.target.value); setManualAmount(""); setAppliedMessage(""); }} style={inputStyle}>{PREFECTURES.map((p) => <option key={p}>{p}</option>)}</select></label>
         <label>配送会社<select value={carrier} onChange={(e) => { setCarrier(e.target.value); setManualAmount(""); setAppliedMessage(""); }} style={inputStyle}>{CARRIERS.map((c) => <option key={c}>{c}</option>)}</select></label>
         <label>発送方法<select value={service} onChange={(e) => { setService(e.target.value); setManualAmount(""); setAppliedMessage(""); }} style={inputStyle}>{services.map((s) => <option key={s}>{s}</option>)}</select></label>
-        {sizes.length > 0 && <label>サイズ<select value={size} onChange={(e) => { setSize(e.target.value); setManualAmount(""); setAppliedMessage(""); }} style={inputStyle}>{sizes.map((s) => <option key={s}>{s}サイズ</option>)}</select></label>}
+        {sizes.length > 0 && <label>サイズ<select value={size} onChange={(e) => { const next = e.currentTarget.value; setSize(next); saveSize(carrier, next); setManualAmount(""); setAppliedMessage(""); }} style={inputStyle}>{sizes.map((s) => <option key={s} value={s}>{s}サイズ</option>)}</select></label>}
         <label>送料（手動変更可）<input inputMode="numeric" value={manualAmount} onChange={(e) => { setManualAmount(e.target.value.replace(/\D/g, "")); setAppliedMessage(""); }} placeholder={`自動：¥${autoAmount.toLocaleString()}`} style={inputStyle} /></label>
       </div>
       <div style={{ marginTop: 14, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
