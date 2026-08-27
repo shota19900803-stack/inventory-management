@@ -22,6 +22,7 @@ export default function SalesShippingEnhancement() {
         if (!host) {
           host = document.createElement("div");
           host.setAttribute("data-sales-shipping-host", "true");
+          host.style.gridColumn = "1 / -1";
           notesLabel.parentElement?.appendChild(host);
         }
         setTarget(host);
