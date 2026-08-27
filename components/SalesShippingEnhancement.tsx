@@ -1,7 +1,52 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { supabaseBrowser } from "../lib/supabase";
-import { PREFECTURES, CARRIERS, findRegion, type ShippingRateCard } from "../lib/shippingRates";
+import {
+  PREFECTURES,
+  CARRIERS,
+  findRegion,
+  type ShippingRateCard,
+  SAGAWA,
+  YUPACK,
+  NEKOPOS,
+  COMPACT,
+  SAGAWA_SIZES,
+  YUPACK_SIZES,
+  YAMATO_SERVICES,
+} from "../lib/shippingRates";
+
+const SERVICE_OPTIONS: Record<string, string[]> = {
+  "佐川急便": ["飛脚宅配便"],
+  "郵便局": ["ゆうパック"],
+  "クロネコヤマト": [...YAMATO_SERVICES],
+};
+
+const SIZE_OPTIONS: Record<string, string[]> = {
+  "佐川急便": [...SAGAWA_SIZES],
+  "郵便局": [...YUPACK_SIZES],
+};
+
+function fallbackAmount(carrier: string, service: string, prefecture: string, size: string): number {
+  const region = findRegion(prefecture, carrier);
+  if (!region) return 0;
+
+  if (carrier === "佐川急便") {
+    const index = SAGAWA_SIZES.indexOf(size);
+    return index >= 0 ? Number(SAGAWA[region]?.[index] ?? 0) : 0;
+  }
+
+  if (carrier === "郵便局") {
+    const index = YUPACK_SIZES.indexOf(size);
+    return index >= 0 ? Number(YUPACK[region]?.[index] ?? 0) : 0;
+  }
+
+  if (carrier === "クロネコヤマト") {
+    if (service === "ネコポス") return Number(NEKOPOS[region] ?? 0);
+    if (service === "宅急便コンパクト") return Number(COMPACT[region] ?? 0);
+  }
+
+  return 0;
+}
 
 export default function SalesShippingEnhancement() {
   const [target, setTarget] = useState<HTMLElement | null>(null);
@@ -14,9 +59,18 @@ export default function SalesShippingEnhancement() {
       const form = heading?.closest("section")?.querySelector("form") ?? null;
       if (!form) return;
 
-      const labels = Array.from(form.querySelectorAll("label"));
-      const notesLabel = labels.find((label) => (label.textContent || "").trim().startsWith("メモ"));
+      // 旧「送料」入力欄は、発送費パネルと二重になるため非表示にする。
+      const legacyShipping = Array.from(form.querySelectorAll("label")).find((label) => {
+        const text = (label.textContent || "").trim();
+        const input = label.querySelector("input") as HTMLInputElement | null;
+        return text.startsWith("送料") && input?.placeholder?.includes("750");
+      });
+      if (legacyShipping) {
+        legacyShipping.setAttribute("data-legacy-shipping", "true");
+        (legacyShipping as HTMLElement).style.display = "none";
+      }
 
+      const notesLabel = Array.from(form.querySelectorAll("label")).find((label) => (label.textContent || "").trim().startsWith("メモ"));
       if (notesLabel) {
         let host = notesLabel.parentElement?.querySelector("[data-sales-shipping-host]") as HTMLElement | null;
         if (!host) {
@@ -56,7 +110,7 @@ function SalesShippingPanel({ target }: Props) {
   const [prefecture, setPrefecture] = useState("岡山県");
   const [carrier, setCarrier] = useState("クロネコヤマト");
   const [service, setService] = useState("宅急便コンパクト");
-  const [size, setSize] = useState("default");
+  const [size, setSize] = useState("60");
   const [manualAmount, setManualAmount] = useState("");
 
   useEffect(() => {
@@ -72,32 +126,26 @@ function SalesShippingPanel({ target }: Props) {
     return () => { active = false; };
   }, []);
 
-  const services = useMemo(
-    () => Array.from(new Set(cards.filter((c) => c.carrier === carrier).map((c) => c.service))),
-    [cards, carrier],
-  );
-
+  const services = SERVICE_OPTIONS[carrier] ?? [];
+  const sizes = SIZE_OPTIONS[carrier] ?? [];
   const region = findRegion(prefecture, carrier);
 
-  const selectedCard = useMemo(
+  useEffect(() => {
+    if (!services.includes(service)) setService(services[0] ?? "");
+  }, [carrier, service, services]);
+
+  useEffect(() => {
+    if (sizes.length && !sizes.includes(size)) setSize(sizes[0]);
+  }, [carrier, size, sizes]);
+
+  const dbCard = useMemo(
     () => cards.find((c) => c.carrier === carrier && c.service === service && c.region === region) ?? null,
     [cards, carrier, service, region],
   );
 
-  const sizeOptions = useMemo(
-    () => carrier === "クロネコヤマト" ? [service] : selectedCard ? Object.keys(selectedCard.rates) : [],
-    [carrier, service, selectedCard],
-  );
-
-  useEffect(() => {
-    if (services.length && !services.includes(service)) setService(services[0]);
-  }, [services, service]);
-
-  useEffect(() => {
-    if (sizeOptions.length && !sizeOptions.includes(size)) setSize(sizeOptions[0]);
-  }, [sizeOptions, size]);
-
-  const autoAmount = Number(selectedCard?.rates[size] ?? selectedCard?.rates.default ?? 0);
+  const dbAmount = Number(dbCard?.rates[size] ?? dbCard?.rates.default ?? 0);
+  const defaultAmount = fallbackAmount(carrier, service, prefecture, size);
+  const autoAmount = dbAmount > 0 ? dbAmount : defaultAmount;
   const amount = manualAmount === "" ? autoAmount : Number(manualAmount);
 
   useEffect(() => {
@@ -115,13 +163,11 @@ function SalesShippingPanel({ target }: Props) {
       const productSelect = Array.from(form.querySelectorAll("select")).find((el) =>
         Array.from(el.options).some((option) => option.textContent === "商品を選択"),
       ) as HTMLSelectElement | undefined;
-
       const productId = productSelect?.value || "";
       const dateInput = form.querySelector('input[type="date"]') as HTMLInputElement | null;
       const priceInput = Array.from(form.querySelectorAll("input[type=number]"))[0] as HTMLInputElement | undefined;
       const quantityInput = Array.from(form.querySelectorAll("input[type=number]"))[2] as HTMLInputElement | undefined;
       const orderNumber = readValue("注文番号");
-
       if (!productId || !dateInput) return;
 
       const saleDate = dateInput.value;
@@ -144,11 +190,9 @@ function SalesShippingPanel({ target }: Props) {
           Number(row.unit_price || 0) === unitPrice &&
           (orderNumber ? String(row.order_number || "").trim() === orderNumber : true),
         ) ?? rows[0];
-
         if (!matched) return;
 
         const grossProfit = Number(matched.total_sales || 0) - Number(matched.total_cost || 0) - amount;
-
         await supabaseBrowser
           .from("sales_history")
           .update({ shipping_cost: amount, gross_profit: grossProfit })
@@ -161,39 +205,58 @@ function SalesShippingPanel({ target }: Props) {
   }, [target, amount]);
 
   return createPortal(
-    <section style={{ marginTop: 18, padding: 18, borderRadius: 16, background: "#f0f9ff", border: "1px solid #bae6fd" }}>
+    <section
+      data-sales-shipping-panel="true"
+      style={{ marginTop: 18, padding: 18, borderRadius: 16, background: "#f0f9ff", border: "1px solid #bae6fd" }}
+    >
       <div style={{ fontSize: 13, fontWeight: 900, color: "#0369a1", letterSpacing: 1 }}>SHIPPING</div>
       <h3 style={{ margin: "4px 0 6px" }}>🚚 発送費</h3>
-      <p style={{ margin: "0 0 14px", color: "#64748b", fontSize: 13 }}>配送先・配送会社・発送方法から送料を自動計算します。必要なら手動変更できます。</p>
+      <p style={{ margin: "0 0 14px", color: "#64748b", fontSize: 13 }}>
+        配送先・配送会社・発送方法（必要な場合はサイズ）を選ぶだけで送料を自動計算します。
+      </p>
+
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(190px,1fr))", gap: 12 }}>
         <label>配送先都道府県
           <select value={prefecture} onChange={(e) => setPrefecture(e.target.value)} style={inputStyle}>
             {PREFECTURES.map((p) => <option key={p}>{p}</option>)}
           </select>
         </label>
+
         <label>配送会社
           <select value={carrier} onChange={(e) => setCarrier(e.target.value)} style={inputStyle}>
             {CARRIERS.map((c) => <option key={c}>{c}</option>)}
           </select>
         </label>
+
         <label>発送方法
           <select value={service} onChange={(e) => setService(e.target.value)} style={inputStyle}>
             {services.map((s) => <option key={s}>{s}</option>)}
           </select>
         </label>
-        {carrier !== "クロネコヤマト" && (
+
+        {sizes.length > 0 && (
           <label>サイズ
             <select value={size} onChange={(e) => setSize(e.target.value)} style={inputStyle}>
-              {sizeOptions.map((s) => <option key={s}>{`${s}サイズ`}</option>)}
+              {sizes.map((s) => <option key={s} value={s}>{s}サイズ</option>)}
             </select>
           </label>
         )}
+
         <label>送料（手動変更可）
-          <input inputMode="numeric" value={manualAmount} onChange={(e) => setManualAmount(e.target.value.replace(/\D/g, ""))} placeholder={`自動：¥${autoAmount.toLocaleString()}`} style={inputStyle} />
+          <input
+            inputMode="numeric"
+            value={manualAmount}
+            onChange={(e) => setManualAmount(e.target.value.replace(/\D/g, ""))}
+            placeholder={`自動：¥${autoAmount.toLocaleString()}`}
+            style={inputStyle}
+          />
         </label>
       </div>
+
       <div style={{ marginTop: 14, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-        <div style={{ color: "#64748b", fontSize: 13 }}>自動計算：{autoAmount ? `¥${autoAmount.toLocaleString()}` : "送料設定未登録"}</div>
+        <div style={{ color: "#64748b", fontSize: 13 }}>
+          {autoAmount ? `自動計算：¥${autoAmount.toLocaleString()}` : "送料設定が見つかりません"}
+        </div>
         <strong style={{ fontSize: 24, color: "#0369a1" }}>送料 ¥{amount.toLocaleString()}</strong>
       </div>
       <div style={{ marginTop: 10, color: "#475569", fontSize: 12 }}>登録後の粗利は「売上 − 原価 − 送料」で計算します。</div>
