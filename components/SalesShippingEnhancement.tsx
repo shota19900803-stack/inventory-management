@@ -181,11 +181,13 @@ function SalesShippingPanel({ target }: Props) {
             {services.map((s) => <option key={s}>{s}</option>)}
           </select>
         </label>
-        <label>{carrier === "クロネコヤマト" ? "発送方法" : "サイズ"}
-          <select value={size} onChange={(e) => setSize(e.target.value)} style={inputStyle}>
-            {sizeOptions.map((s) => <option key={s}>{carrier === "クロネコヤマト" ? s : `${s}サイズ`}</option>)}
-          </select>
-        </label>
+        {carrier !== "クロネコヤマト" && (
+          <label>サイズ
+            <select value={size} onChange={(e) => setSize(e.target.value)} style={inputStyle}>
+              {sizeOptions.map((s) => <option key={s}>{`${s}サイズ`}</option>)}
+            </select>
+          </label>
+        )}
         <label>送料（手動変更可）
           <input inputMode="numeric" value={manualAmount} onChange={(e) => setManualAmount(e.target.value.replace(/\D/g, ""))} placeholder={`自動：¥${autoAmount.toLocaleString()}`} style={inputStyle} />
         </label>
