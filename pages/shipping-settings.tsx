@@ -1,0 +1,18 @@
+import { useEffect, useMemo, useState } from "react";
+import { supabaseBrowser } from "../lib/supabase";
+import { CARRIERS, type ShippingRateCard } from "../lib/shippingRates";
+
+export default function ShippingSettings() {
+  const [cards,setCards]=useState<ShippingRateCard[]>([]),[carrier,setCarrier]=useState("佐川急便"),[saving,setSaving]=useState(false),[message,setMessage]=useState("");
+  const load=async()=>{const {data,error}=await supabaseBrowser.from("shipping_rate_cards").select("*").order("sort_order"); if(error)setMessage(`読み込みエラー：${error.message}`); else setCards((data??[]) as ShippingRateCard[]);};
+  useEffect(()=>{load();},[]);
+  const groups=useMemo(()=>cards.filter(c=>c.carrier===carrier).reduce<Record<string,ShippingRateCard[]>>((a,c)=>(a[c.service]??=[]).push(c),{}),[cards,carrier]);
+  const updateRate=(id:string,key:string,value:string)=>setCards(prev=>prev.map(c=>c.id===id?{...c,rates:{...c.rates,[key]:Number(value)||0}}:c));
+  const save=async(card:ShippingRateCard)=>{setSaving(true);const {error}=await supabaseBrowser.from("shipping_rate_cards").update({rates:card.rates,updated_at:new Date().toISOString()}).eq("id",card.id);setSaving(false);setMessage(error?`保存エラー：${error.message}`:"保存しました！");};
+  return <main style={{minHeight:"100vh",background:"#f6f7f9",padding:"28px 18px 100px",fontFamily:"system-ui,-apple-system,BlinkMacSystemFont,sans-serif",color:"#111827"}}><div style={{maxWidth:1100,margin:"0 auto"}}>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,flexWrap:"wrap"}}><div><div style={{fontSize:12,fontWeight:800,color:"#64748b",letterSpacing:2}}>SHIPPING SETTINGS</div><h1 style={{margin:"5px 0",fontSize:34}}>🚚 発送費設定</h1><p style={{color:"#64748b",marginTop:6}}>画像の送料表を初期値として登録済み。金額はいつでも変更できます。</p></div><a href="/" style={{padding:"12px 16px",borderRadius:12,background:"#111827",color:"white",textDecoration:"none",fontWeight:800}}>← 在庫管理へ</a></div>
+    <div style={{display:"flex",gap:8,margin:"22px 0",flexWrap:"wrap"}}>{CARRIERS.map(c=><button key={c} onClick={()=>setCarrier(c)} style={{border:0,borderRadius:999,padding:"11px 18px",background:carrier===c?"#111827":"#e5e7eb",color:carrier===c?"white":"#111827",fontWeight:900}}>{c}</button>)}</div>
+    {message&&<div style={{padding:13,background:"#ecfdf5",color:"#047857",borderRadius:12,fontWeight:800,marginBottom:16}}>{message}</div>}
+    {Object.entries(groups).map(([service,list])=><section key={service} style={{background:"white",borderRadius:20,padding:20,marginBottom:20,boxShadow:"0 5px 20px rgba(15,23,42,.05)"}}><h2 style={{marginTop:0}}>{service}</h2><div style={{display:"grid",gap:12}}>{list.map(card=><div key={card.id} style={{border:"1px solid #e2e8f0",borderRadius:16,padding:16}}><div style={{fontWeight:900,fontSize:17}}>{card.region}</div><div style={{color:"#64748b",fontSize:13,margin:"4px 0 12px"}}>{card.prefectures.join("・")}</div><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(105px,1fr))",gap:9}}>{Object.entries(card.rates).map(([key,val])=><label key={key} style={{fontSize:12,fontWeight:800}}>{key==="default"?"送料":`${key}サイズ`}<input inputMode="numeric" value={String(val)} onChange={e=>updateRate(card.id,key,e.target.value)} style={{display:"block",width:"100%",boxSizing:"border-box",padding:9,borderRadius:9,border:"1px solid #cbd5e1",marginTop:4}}/></label>)}</div><button disabled={saving} onClick={()=>save(card)} style={{marginTop:13,border:0,borderRadius:10,padding:"10px 15px",background:"#0369a1",color:"white",fontWeight:900}}>{saving?"保存中…":"この地域を保存"}</button></div>)}</div></section>)}
+  </div></main>;
+}
