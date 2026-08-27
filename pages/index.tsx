@@ -1,6 +1,7 @@
 import dynamic from "next/dynamic";
 import { Component, useEffect } from "react";
 import { supabaseBrowser } from "../lib/supabase";
+import SalesShippingEnhancement from "../components/SalesShippingEnhancement";
 
 const Dashboard = dynamic(() => import("../components/Dashboard"), {
   ssr: false,
@@ -50,8 +51,6 @@ export default function Home() {
       return false;
     };
 
-    // 商品管理の「履歴」は、商品名の完全一致ではなくJANコードから商品IDを特定する。
-    // 一覧表示では商品名セル内にJANも表示されるため、商品名に余計な表示情報が含まれていても安全に開ける。
     const bindProductHistoryButtons = () => {
       const main = document.querySelector("main");
       if (!main) return;
@@ -79,7 +78,6 @@ export default function Home() {
           button.textContent = "読込中…";
 
           try {
-            // 商品名セルに表示されている13桁JANを優先して商品IDを取得する。
             const janMatches = rowText.match(/\d{13}/g) || [];
             let productId: string | null = null;
 
@@ -96,7 +94,6 @@ export default function Home() {
               productId = data?.id ?? null;
             }
 
-            // JANがない旧商品にも対応するため、最後に商品名完全一致をフォールバックとして残す。
             if (!productId) {
               const { data, error } = await supabase
                 .from("products")
@@ -147,6 +144,7 @@ export default function Home() {
   return (
     <>
       <SafeBoundary><Dashboard /></SafeBoundary>
+      <SalesShippingEnhancement />
       <a href="/sales-order" style={{ position: "fixed", left: "50%", bottom: 206, transform: "translateX(-50%)", zIndex: 1001, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "13px 22px", borderRadius: 999, background: "#7c3aed", color: "#fff", textDecoration: "none", fontWeight: 900, boxShadow: "0 8px 24px rgba(124,58,237,.25)", whiteSpace: "nowrap" }}>💰 注文まとめ売上</a>
       <a href="/product-history" style={{ position: "fixed", left: "50%", bottom: 144, transform: "translateX(-50%)", zIndex: 1001, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "13px 22px", borderRadius: 999, background: "#0f766e", color: "#fff", textDecoration: "none", fontWeight: 800, boxShadow: "0 8px 24px rgba(15,118,110,.25)", whiteSpace: "nowrap" }}>📦 商品別履歴</a>
       <a href="/products" style={{ position: "fixed", left: "50%", bottom: 82, transform: "translateX(-50%)", zIndex: 1001, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "13px 22px", borderRadius: 999, background: "#15803d", color: "#fff", textDecoration: "none", fontWeight: 800, boxShadow: "0 8px 24px rgba(21,128,61,.28)", whiteSpace: "nowrap" }}>＋ 商品登録</a>
