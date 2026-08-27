@@ -11,7 +11,7 @@ if (source.includes(marker)) {
 }
 
 const oldBlock = `    setSaleForm(initialSaleForm);\n\n    await loadAll();`;
-const newBlock = `    setSaleForm(initialSaleForm);\n\n    // 登録後に月次集計へ戻らず、売上登録画面に留まる。\n    // 最新の売上履歴を再取得した後、最近の売上が見える位置へ移動する。\n    await loadAll();\n    setTab("sales");\n    setTimeout(() => {\n      window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });\n    }, 50);`;
+const newBlock = `    setSaleForm(initialSaleForm);\n\n    // 登録後に月次集計へ戻らず、売上登録画面に留まる。\n    // 保存後の再描画でページ末尾へジャンプしないよう、画面上部へ戻す。\n    await loadAll();\n    setTab("sales");\n    requestAnimationFrame(() => {\n      window.scrollTo({ top: 0, behavior: "auto" });\n    });`;
 
 if (!source.includes(oldBlock)) {
   throw new Error("Sale registration success block was not found.");
