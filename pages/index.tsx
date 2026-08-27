@@ -2,6 +2,7 @@ import dynamic from "next/dynamic";
 import { Component, useEffect } from "react";
 import { supabaseBrowser } from "../lib/supabase";
 import SalesShippingEnhancement from "../components/SalesShippingEnhancement";
+import QuickActions from "../components/QuickActions";
 
 const Dashboard = dynamic(() => import("../components/Dashboard"), {
   ssr: false,
@@ -145,8 +146,7 @@ export default function Home() {
     <>
       <SafeBoundary><Dashboard /></SafeBoundary>
       <SalesShippingEnhancement />
-      <a href="/sales-order" style={{ position: "fixed", left: "50%", bottom: 206, transform: "translateX(-50%)", zIndex: 1001, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "13px 22px", borderRadius: 999, background: "#7c3aed", color: "#fff", textDecoration: "none", fontWeight: 900, boxShadow: "0 8px 24px rgba(124,58,237,.25)", whiteSpace: "nowrap" }}>💰 注文まとめ売上</a>
-      <a href="/product-history" style={{ position: "fixed", left: "50%", bottom: 144, transform: "translateX(-50%)", zIndex: 1001, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "13px 22px", borderRadius: 999, background: "#0f766e", color: "#fff", textDecoration: "none", fontWeight: 800, boxShadow: "0 8px 24px rgba(15,118,110,.25)", whiteSpace: "nowrap" }}>📦 商品別履歴</a>
+      <QuickActions />
       <a href="/products" style={{ position: "fixed", left: "50%", bottom: 82, transform: "translateX(-50%)", zIndex: 1001, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "13px 22px", borderRadius: 999, background: "#15803d", color: "#fff", textDecoration: "none", fontWeight: 800, boxShadow: "0 8px 24px rgba(21,128,61,.28)", whiteSpace: "nowrap" }}>＋ 商品登録</a>
       <a href="/stocktake" style={{ position: "fixed", left: "50%", bottom: 20, transform: "translateX(-50%)", zIndex: 1001, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "13px 22px", borderRadius: 999, background: "#111827", color: "#fff", textDecoration: "none", fontWeight: 900, boxShadow: "0 8px 24px rgba(17,24,39,.22)", whiteSpace: "nowrap" }}>📋 棚卸し</a>
       <a href="/management" style={{ position: "fixed", left: 20, bottom: 20, zIndex: 1000, display: "inline-flex", alignItems: "center", gap: 8, padding: "13px 18px", borderRadius: 999, background: "#111827", color: "#fff", textDecoration: "none", fontWeight: 800, boxShadow: "0 8px 24px rgba(17,24,39,.2)" }}>📊 経営ダッシュボード</a>
