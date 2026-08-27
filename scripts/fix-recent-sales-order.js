@@ -18,7 +18,7 @@ if (
 
 // 前の修正スクリプトでインデントやコメントが変わっていても拾えるように、
 // sales_history の取得部分を正規表現で安全に置き換える。
-const queryPattern = /\.from\("sales_history"\)([\\s\\S]*?)\.limit\(2000\),/;
+const queryPattern = /\.from\("sales_history"\)([\s\S]*?)\.limit\(2000\),/;
 const match = source.match(queryPattern);
 
 if (!match) {
@@ -29,18 +29,15 @@ if (!match) {
 }
 
 const block = match[0];
-const updatedBlock = block
-  .replace(
-    /\.order\("sale_date",\s*\{\s*ascending:\s*false\s*\}\)/,
-    '.order("created_at", { ascending: false, nullsFirst: false })\n      // 「最近の売上」は売上日ではなく、実際に登録した順で新しいものを上に表示する。\n      .order("sale_date", { ascending: false })'
-  )
-  .replace(
-    /\.order\("created_at",\s*\{\s*ascending:\s*false\s*\}\)\s*\.order\("sale_date",\s*\{\s*ascending:\s*false\s*\}\)/,
-    '.order("created_at", { ascending: false, nullsFirst: false })\n      .order("sale_date", { ascending: false })'
-  );
+
+// sale_date のみで並べている場合は、登録日時を第一優先にする。
+const updatedBlock = block.replace(
+  /\.order\("sale_date",\s*\{\s*ascending:\s*false\s*\}\)/,
+  '.order("created_at", { ascending: false, nullsFirst: false })\n      // 「最近の売上」は売上日ではなく、実際に登録した順で新しいものを上に表示する。\n      .order("sale_date", { ascending: false })'
+);
 
 if (updatedBlock === block) {
-  // すでに created_at がある等、置換不要な状態ならビルドを継続。
+  // すでに created_at を使っている等、置換不要な状態ならビルドを継続。
   console.log("Recent sales query does not need modification.");
   process.exit(0);
 }
