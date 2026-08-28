@@ -12,6 +12,7 @@ type DebugEntry = {
   status?: number;
   count?: number;
   message?: string;
+  price?: number | null;
 };
 
 const PRODUCT_API =
@@ -34,9 +35,6 @@ const normalize = (v: unknown) =>
     .replace(/\s+/g, " ")
     .trim();
 
-// Only reject terms that clearly indicate a non-new listing.
-// Do NOT inspect itemCaption for these words: normal product descriptions
-// frequently contain words such as パーツ/部品 even for brand-new items.
 const EXCLUDED_WORDS = [
   "中古",
   "中古品",
@@ -72,7 +70,9 @@ function itemsOf(data: any): any[] {
 }
 
 function isExcluded(item: any) {
-  const text = cleanText(`${item?.itemName ?? ""} ${item?.catchcopy ?? ""}`).toLowerCase();
+  const text = cleanText(
+    `${item?.itemName ?? ""} ${item?.catchcopy ?? ""}`
+  ).toLowerCase();
   return EXCLUDED_WORDS.some((word) => text.includes(word.toLowerCase()));
 }
 
@@ -103,6 +103,12 @@ async function fetchJson(url: URL, accessKey: string, timeoutMs = 10000) {
   }
 }
 
+/**
+ * JAN -> Rakuten Product Search.
+ * Product Search is the authoritative identity lookup. When Rakuten has
+ * current price information for the JAN, use usedExcludeSalesMinPrice
+ * directly: it means the lowest purchasable price excluding used items.
+ */
 async function lookupProductByJan(
   appId: string,
   accessKey: string,
@@ -114,27 +120,32 @@ async function lookupProductByJan(
   url.searchParams.set("formatVersion", "2");
   url.searchParams.set("applicationId", appId);
   url.searchParams.set("productCode", jan);
-  // productCode is the JAN search key. Rakuten documents that it cannot be
-  // combined with other service-specific search parameters.
 
   const { response, data } = await fetchJson(url, accessKey);
   const items = itemsOf(data);
+  const product = items[0] ?? null;
+  const directPrice = priceOf(product?.usedExcludeSalesMinPrice);
 
   debug.push({
     api: "ProductSearch(JAN)",
     status: response.status,
     count: Number(data?.count ?? items.length),
+    price: directPrice,
   });
 
   if (!response.ok) {
     debug.push({
       api: "ProductSearch(JAN)",
-      message: data?.error_description || data?.error || `HTTP ${response.status}`,
+      message:
+        data?.error_description || data?.error || `HTTP ${response.status}`,
     });
     return null;
   }
 
-  return items[0] ?? null;
+  return {
+    product,
+    directPrice,
+  };
 }
 
 function extractModels(text: string) {
@@ -142,15 +153,31 @@ function extractModels(text: string) {
   return Array.from(new Set(matches.map((x) => x.toUpperCase())));
 }
 
-function compactNameQuery(name: string) {
-  const normalized = cleanText(name);
-  const tokens = normalized
-    .split(/[\s　]+/)
-    .filter((token) => token.length >= 2)
-    .filter((token) => !/^(BANDAI|BANDAI\s*SPIRITS|SPIRITS)$/i.test(token));
+function meaningfulNameTokens(text: string) {
+  const generic = new Set([
+    "bandai",
+    "spirits",
+    "mg",
+    "hg",
+    "rg",
+    "pg",
+    "1",
+    "100",
+    "144",
+    "24",
+    "64",
+  ]);
 
-  // Prefer a short AND query. Long catalog titles are too restrictive.
-  return tokens.slice(0, 4).join(" ");
+  return normalize(text)
+    .split(" ")
+    .map((x) => x.trim())
+    .filter((x) => x.length >= 2)
+    .filter((x) => !generic.has(x));
+}
+
+function compactNameQuery(name: string) {
+  const tokens = meaningfulNameTokens(name);
+  return tokens.slice(0, 5).join(" ");
 }
 
 function makeFallbackQueries(p: Product, canonical: any) {
@@ -168,7 +195,9 @@ function makeFallbackQueries(p: Product, canonical: any) {
     brand && code ? `${brand} ${code}` : "",
   ];
 
-  return Array.from(new Set(queries.map(cleanText).filter((q) => q.length >= 2))).slice(0, 3);
+  return Array.from(
+    new Set(queries.map(cleanText).filter((q) => q.length >= 2))
+  ).slice(0, 4);
 }
 
 async function searchIchiba(
@@ -190,12 +219,9 @@ async function searchIchiba(
   url.searchParams.set("purchaseType", "0");
   url.searchParams.set(
     "elements",
-    "itemName,catchcopy,itemPrice,itemPriceMin3,itemCaption,itemUrl,availability,shopName,shopUrl,itemCode"
+    "itemName,catchcopy,itemPrice,itemPriceMin3,itemCaption,itemUrl,shopName,shopUrl,itemCode"
   );
 
-  // Deliberately do not send NGKeyword here. Rakuten's NGKeyword filtering
-  // can discard a legitimate new listing when an excluded word appears in
-  // its description. We perform a safer title/catchcopy filter locally.
   const { response, data } = await fetchJson(url, accessKey);
   const items = itemsOf(data);
 
@@ -208,20 +234,13 @@ async function searchIchiba(
   if (!response.ok) {
     debug.push({
       api: "IchibaItemSearch",
-      message: data?.error_description || data?.error || `HTTP ${response.status}`,
+      message:
+        data?.error_description || data?.error || `HTTP ${response.status}`,
     });
     return [];
   }
 
   return items;
-}
-
-function tokenizeName(text: string) {
-  return normalize(text)
-    .split(" ")
-    .map((x) => x.trim())
-    .filter((x) => x.length >= 2)
-    .filter((x) => !["bandai", "spirits", "mg", "hg", "rg", "pg"].includes(x));
 }
 
 function chooseFallbackItem(items: any[], p: Product, canonical: any) {
@@ -233,9 +252,11 @@ function chooseFallbackItem(items: any[], p: Product, canonical: any) {
   ]
     .map(normalize)
     .map((x) => x.replace(/\s+/g, ""))
-    .filter(Boolean);
+    .filter((x) => x.length >= 2);
 
-  const wantedNameTokens = tokenizeName(canonical?.productName || p.name);
+  const wantedNameTokens = meaningfulNameTokens(
+    canonical?.productName || p.name
+  );
 
   const candidates = items
     .map((item: any) => {
@@ -251,20 +272,22 @@ function chooseFallbackItem(items: any[], p: Product, canonical: any) {
       const digits = text.replace(/\D/g, "");
 
       const hasJan = jan.length === 13 && digits.includes(jan);
-      const hasModel = modelValues.some((model) => normalizedText.includes(model));
+      const hasModel = modelValues.some((model) =>
+        normalizedText.includes(model)
+      );
       const matchedNameTokens = wantedNameTokens.filter((token) =>
         normalizedText.includes(token.replace(/\s+/g, ""))
       ).length;
 
-      // Require an identity match. For products without a usable model/JAN
-      // match, two meaningful product-name tokens are enough.
+      // Strong match: exact JAN or model. Name-only fallback needs at least
+      // two meaningful tokens so a broad query cannot return an unrelated item.
       const identityMatch = hasJan || hasModel || matchedNameTokens >= 2;
       if (!identityMatch) return null;
 
       let score = 0;
-      if (hasJan) score += 1000000;
-      if (hasModel) score += 100000;
-      score += Math.min(matchedNameTokens, 10) * 1000;
+      if (hasJan) score += 1_000_000;
+      if (hasModel) score += 100_000;
+      score += Math.min(matchedNameTokens, 10) * 1_000;
 
       return { item, price, score };
     })
@@ -293,7 +316,10 @@ export async function POST(request: NextRequest) {
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ error: "JSONが不正です。", results: [] }, { status: 400 });
+    return NextResponse.json(
+      { error: "JSONが不正です。", results: [] },
+      { status: 400 }
+    );
   }
 
   const raw = Array.isArray(body?.products) ? body.products : [];
@@ -305,15 +331,25 @@ export async function POST(request: NextRequest) {
   }));
 
   const unique = Array.from(
-    new Map(products.filter((p) => p.jan.length === 13).map((p) => [p.jan, p])).values()
+    new Map(
+      products
+        .filter((p) => p.jan.length === 13)
+        .map((p) => [p.jan, p])
+    ).values()
   );
 
   if (!unique.length) {
-    return NextResponse.json({ error: "有効な13桁JANの商品がありません。", results: [] }, { status: 400 });
+    return NextResponse.json(
+      { error: "有効な13桁JANの商品がありません。", results: [] },
+      { status: 400 }
+    );
   }
 
   if (unique.length > 5) {
-    return NextResponse.json({ error: "1回の取得は最大5商品です。", results: [] }, { status: 400 });
+    return NextResponse.json(
+      { error: "1回の取得は最大5商品です。", results: [] },
+      { status: 400 }
+    );
   }
 
   const results: any[] = [];
@@ -323,19 +359,45 @@ export async function POST(request: NextRequest) {
     const debug: DebugEntry[] = [];
 
     try {
-      // Product Search is now used only as a canonical identity lookup.
-      // Its aggregate price fields are known to be nullable, so they are
-      // intentionally never used as the source of the Rakuten lowest price.
-      const canonical = await lookupProductByJan(appId, accessKey, p.jan, debug);
+      const canonicalResult = await lookupProductByJan(
+        appId,
+        accessKey,
+        p.jan,
+        debug
+      );
+      const canonical = canonicalResult?.product ?? null;
 
+      // First choice: Rakuten Product Search's own aggregate price.
+      // This is exactly the metric we want: purchasable lowest price
+      // excluding used items.
+      if (canonicalResult?.directPrice != null) {
+        results.push({
+          jan: p.jan,
+          price: canonicalResult.directPrice,
+          productName: canonical?.productName ?? p.name,
+          itemUrl: canonical?.productUrlPC ?? null,
+          shopName: null,
+          source: "rakuten-product-search-used-exclude-sales-min-price",
+          matchedBy: "JAN",
+          elapsedMs: Date.now() - started,
+          debug,
+          error: null,
+        });
+        continue;
+      }
+
+      // Product Search can legitimately have no current purchasable new
+      // price. In that case, search actual Ichiba listings as a fallback.
       const queries = makeFallbackQueries(p, canonical);
       let chosen: { item: any; price: number; score: number } | null = null;
+      let matchedBy: string | null = null;
 
       for (const query of queries) {
         const items = await searchIchiba(appId, accessKey, query, debug);
         const candidate = chooseFallbackItem(items, p, canonical);
         if (candidate) {
           chosen = candidate;
+          matchedBy = query;
           break;
         }
       }
@@ -348,15 +410,7 @@ export async function POST(request: NextRequest) {
           itemUrl: chosen.item.itemUrl ?? null,
           shopName: chosen.item.shopName ?? null,
           source: "rakuten-ichiba-item-search",
-          matchedBy: queries.find((q) => {
-            const text = normalize(
-              `${chosen!.item.itemName ?? ""} ${chosen!.item.catchcopy ?? ""} ${chosen!.item.itemCode ?? ""}`
-            ).replace(/\s+/g, "");
-            return (
-              text.includes(normalize(q).replace(/\s+/g, "")) ||
-              text.includes(normalize(p.model).replace(/\s+/g, ""))
-            );
-          }) ?? queries[0] ?? null,
+          matchedBy,
           elapsedMs: Date.now() - started,
           debug,
           error: null,
@@ -365,10 +419,11 @@ export async function POST(request: NextRequest) {
         results.push({
           jan: p.jan,
           price: null,
+          productName: canonical?.productName ?? p.name,
           elapsedMs: Date.now() - started,
           debug,
           error:
-            "楽天市場の購入可能商品を検索しましたが、新品と判定できる一致商品が見つかりませんでした。",
+            "楽天の購入可能な新品価格が取得できませんでした。商品自体に新品在庫がない場合もあります。",
         });
       }
     } catch (error: any) {
