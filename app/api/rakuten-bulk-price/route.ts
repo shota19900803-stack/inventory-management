@@ -79,7 +79,6 @@ function chooseLowestNew(items: ItemHit[], jan: string) {
     .map((item) => ({ item, price: pickPrice(item) }))
     .filter(({ item, price }) => price != null && !looksUsedOrDamaged(item));
 
-  // Prefer an exact JAN occurrence when the JAN is present in itemCode/title/copy.
   const exact = candidates.filter(({ item }) => {
     const text = `${item.itemCode ?? ""} ${item.itemName ?? ""} ${item.catchcopy ?? ""} ${item.itemCaption ?? ""}`
       .replace(/\D/g, "");
@@ -225,8 +224,6 @@ export async function POST(request: NextRequest) {
     const started = Date.now();
 
     try {
-      // 最優先：JANそのものを楽天市場の商品検索へ渡す。
-      // 商品名へ変換してから検索するより、JAN一致商品を直接拾えるため誤爆が少ない。
       const direct = await searchItems(appId, accessKey, p.jan, debugJan);
       if (!direct.response.ok) {
         results.push({
@@ -243,8 +240,6 @@ export async function POST(request: NextRequest) {
       let source = "IchibaItemSearch:JAN";
       let resolvedProduct: ProductHit | null = null;
 
-      // JAN直検索で見つからない場合だけProduct Searchで商品を解決し、
-      // 型番→商品名の順に最大2回だけ市場検索する。
       if (!chosen) {
         const productLookup = await productByJan(appId, accessKey, p.jan, debugProduct);
         if (!productLookup.response.ok) {
@@ -276,7 +271,7 @@ export async function POST(request: NextRequest) {
                 elapsedMs: Date.now() - started, debug: [debugJan, debugProduct, debugFallback],
                 error: "楽天Ichiba Item Searchがアクセス制限(429)を返しました。",
               });
-              chosen = null;
+              // chosenはこの分岐に入った時点でnullのままなので、null代入は不要。
               break;
             }
             continue;
