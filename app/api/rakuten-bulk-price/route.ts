@@ -57,12 +57,12 @@ async function productSearchByJan(
   url.searchParams.set("formatVersion", "2");
   url.searchParams.set("applicationId", appId);
   url.searchParams.set("accessKey", accessKey);
+
+  // IMPORTANT: Rakuten's Product Search API documents productCode (JAN) as
+  // mutually exclusive with service-specific search parameters. In the JAN
+  // lookup route, do NOT send hits/elements/etc. Sending them together can
+  // turn an otherwise valid JAN lookup into an API error.
   url.searchParams.set("productCode", jan);
-  url.searchParams.set("hits", "1");
-  url.searchParams.set(
-    "elements",
-    "productId,productCode,productName,productNo,brandName,makerName,productUrlPC,salesItemCount,usedExcludeSalesItemCount,salesMinPrice,usedExcludeSalesMinPrice",
-  );
 
   debug.api = "ProductSearch(JAN)";
   debug.query = jan;
@@ -94,7 +94,7 @@ async function productSearchByJan(
     debug.message = response.ok
       ? undefined
       : data?.error_description || data?.error || text.slice(0, 500);
-    debug.sample = hits.slice(0, 1).map((p) => ({
+    debug.sample = hits.slice(0, 3).map((p) => ({
       name: cleanText(`${p.productName ?? ""} ${p.productNo ?? ""} ${p.brandName ?? ""}`),
       price: priceOf(p.usedExcludeSalesMinPrice) ?? priceOf(p.salesMinPrice),
       url: p.productUrlPC ?? null,
@@ -149,9 +149,7 @@ export async function POST(request: NextRequest) {
 
   const results: any[] = [];
 
-  // Important: Product Search already provides the purchasable minimum price
-  // excluding used items. There is no reason to fan out into Item Search for
-  // the "楽天市場 新品最安値" feature. One JAN = one Product Search request.
+  // One JAN = one Product Search request.
   for (const p of unique) {
     const debug: DebugEntry = { api: "ProductSearch(JAN)", query: p.jan };
     const started = Date.now();
@@ -189,8 +187,6 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      // This is the key field for the requested feature:
-      // "usedExcludeSalesMinPrice" = lowest purchasable price excluding used.
       const newLowest = priceOf(hit.usedExcludeSalesMinPrice);
       const fallbackLowest = priceOf(hit.salesMinPrice);
       const price = newLowest ?? fallbackLowest;
@@ -215,7 +211,6 @@ export async function POST(request: NextRequest) {
           makerName: hit.makerName ?? null,
           productUrlPC: hit.productUrlPC ?? null,
         },
-        // Keep the actual API values visible for diagnosis.
         priceSource: newLowest != null
           ? "usedExcludeSalesMinPrice"
           : fallbackLowest != null
