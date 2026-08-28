@@ -6,10 +6,14 @@ const cleanText = (v: unknown) => String(v ?? "").replace(/[\s　]+/g, " ").trim
 const normalize = (v: unknown) => cleanText(v).toLowerCase().replace(/[【】\[\]（）()「」『』<>＜＞]/g, " ").replace(/[^0-9a-zぁ-んァ-ヶ一-龠 ]/g, " ").replace(/\s+/g, " ").trim();
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function fetchJson(url: URL, accessKey: string, timeoutMs = 9000) {
+async function fetchJson(url: URL, accessKey: string, timeoutMs = 12000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
+    // Rakuten's current APIs accept the Access Key either in the accessKey
+    // header or as a query parameter. Send both so the serverless runtime
+    // cannot lose authentication when proxying the request.
+    url.searchParams.set("accessKey", accessKey);
     const response = await fetch(url, {
       cache: "no-store",
       signal: controller.signal,
@@ -17,7 +21,7 @@ async function fetchJson(url: URL, accessKey: string, timeoutMs = 9000) {
     });
     const text = await response.text();
     let data: any = {};
-    try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text.slice(0, 800) }; }
+    try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text.slice(0, 1200) }; }
     return { response, data };
   } finally { clearTimeout(timer); }
 }
@@ -28,7 +32,8 @@ function itemsOf(data: any): any[] {
 }
 
 function priceOf(value: unknown): number | null {
-  const n = Number(String(value ?? "").replace(/,/g, ""));
+  if (value === null || value === undefined || value === "") return null;
+  const n = Number(String(value).replace(/,/g, ""));
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
@@ -90,6 +95,7 @@ async function searchProductByJan(appId: string, accessKey: string, jan: string)
   url.searchParams.set("formatVersion", "2");
   url.searchParams.set("applicationId", appId);
   url.searchParams.set("productCode", jan);
+  // productCode cannot be combined with service-specific search parameters.
   return fetchJson(url, accessKey);
 }
 
@@ -101,6 +107,7 @@ async function searchProductByKeyword(appId: string, accessKey: string, keyword:
   url.searchParams.set("keyword", keyword.slice(0, 128));
   url.searchParams.set("hits", "30");
   url.searchParams.set("sort", "-satisfied");
+  url.searchParams.set("elements", "productId,productCode,productName,productNo,brandName,salesItemCount,salesMinPrice,usedExcludeSalesMinPrice,usedExcludeMinPrice");
   return fetchJson(url, accessKey);
 }
 
@@ -109,7 +116,6 @@ async function searchItemsByKeyword(appId: string, accessKey: string, keyword: s
   url.searchParams.set("format", "json");
   url.searchParams.set("formatVersion", "2");
   url.searchParams.set("applicationId", appId);
-  url.searchParams.set("accessKey", accessKey);
   url.searchParams.set("keyword", keyword.slice(0, 128));
   url.searchParams.set("hits", "30");
   url.searchParams.set("sort", "+itemPrice");
@@ -145,25 +151,26 @@ export async function POST(request: NextRequest) {
     let candidate: any = null;
 
     try {
-      // A. Exact JAN -> Product Search. This is the most accurate source because
-      // Rakuten returns the product-level minimum excluding used items.
+      // 1. Exact JAN -> Product Search. One request, no service-specific
+      // parameters, and explicit price fields in the response.
       try {
         const r = await searchProductByJan(appId, accessKey, p.jan);
         const list = itemsOf(r.data);
         debug.push(`商品価格ナビJAN:${r.response.status}/${list.length}`);
-        const found = r.response.ok ? chooseProductPrice(list, p) : null;
-        if (found) {
-          results.push({ jan: p.jan, price: found.price, productName: found.item.productName ?? p.name, productCode: found.item.productCode ?? p.jan, source: "product-price-navigation", elapsedMs: Date.now() - started, error: null });
-          continue;
+        if (r.response.ok) {
+          const found = chooseProductPrice(list, p);
+          if (found) {
+            results.push({ jan: p.jan, price: found.price, productName: found.item.productName ?? p.name, productCode: found.item.productCode ?? p.jan, source: "product-price-navigation", elapsedMs: Date.now() - started, error: null });
+            continue;
+          }
+        } else {
+          debug.push(apiError(r.data, r.response.status));
         }
-        if (!r.response.ok) debug.push(apiError(r.data, r.response.status));
       } catch (e: any) {
         debug.push(e?.name === "AbortError" ? "商品価格ナビJAN:timeout" : `商品価格ナビJAN:${e?.message || "error"}`);
       }
 
-      // B. Product Search by model/name. Unlike an Item Search, this can return
-      // the product-level aggregate prices even when the JAN productCode lookup
-      // has no product mapping.
+      // 2. Product Search by model/name. This is still product-level pricing.
       const productKeywords = Array.from(new Set([
         p.model,
         p.brand && p.model ? `${p.brand} ${p.model}` : "",
@@ -174,12 +181,24 @@ export async function POST(request: NextRequest) {
           const r = await searchProductByKeyword(appId, accessKey, keyword);
           const list = itemsOf(r.data);
           debug.push(`商品価格ナビ:${keyword.slice(0, 20)}:${r.response.status}/${list.length}`);
-          if (!r.response.ok) continue;
+          if (!r.response.ok) {
+            debug.push(apiError(r.data, r.response.status));
+            continue;
+          }
           const found = chooseProductPrice(list, p);
-          if (found && (found.item.productCode === p.jan || normalize(found.item.productName).includes(normalize(p.name)) || (p.model && normalize(found.item.productName).includes(normalize(p.model))))) {
-            results.push({ jan: p.jan, price: found.price, productName: found.item.productName ?? p.name, productCode: found.item.productCode ?? null, source: "product-search-keyword", elapsedMs: Date.now() - started, error: null });
-            candidate = found;
-            break;
+          if (found) {
+            const foundCode = cleanJan(found.item.productCode);
+            const foundName = normalize(found.item.productName);
+            const targetName = normalize(p.name);
+            const targetModel = normalize(p.model);
+            const reliableMatch = foundCode === p.jan ||
+              (targetModel && foundName.includes(targetModel)) ||
+              (targetName && (foundName.includes(targetName) || targetName.includes(foundName)));
+            if (reliableMatch) {
+              results.push({ jan: p.jan, price: found.price, productName: found.item.productName ?? p.name, productCode: found.item.productCode ?? null, source: "product-search-keyword", elapsedMs: Date.now() - started, error: null });
+              candidate = found;
+              break;
+            }
           }
         } catch (e: any) {
           debug.push(`商品価格ナビ:${keyword.slice(0, 20)}:${e?.name === "AbortError" ? "timeout" : "error"}`);
@@ -189,16 +208,22 @@ export async function POST(request: NextRequest) {
       }
       if (candidate) continue;
 
-      // C. Final fallback: actual Rakuten Ichiba listings sorted by purchasable
-      // item price. This is slower, but gives a price when product navigation
-      // has no aggregate price data.
-      const itemKeywords = Array.from(new Set([p.model, p.brand && p.model ? `${p.brand} ${p.model}` : "", p.name].map(cleanText).filter((v) => v.length >= 2)));
+      // 3. Final fallback: actual Rakuten Ichiba listings sorted by price.
+      const itemKeywords = Array.from(new Set([
+        p.jan,
+        p.model,
+        p.brand && p.model ? `${p.brand} ${p.model}` : "",
+        p.name,
+      ].map(cleanText).filter((v) => v.length >= 2)));
       for (const keyword of itemKeywords) {
         try {
           const r = await searchItemsByKeyword(appId, accessKey, keyword);
           const list = itemsOf(r.data);
           debug.push(`楽天市場:${keyword.slice(0, 20)}:${r.response.status}/${list.length}`);
-          if (!r.response.ok) continue;
+          if (!r.response.ok) {
+            debug.push(apiError(r.data, r.response.status));
+            continue;
+          }
           const found = chooseItem(list, p);
           if (found) {
             results.push({ jan: p.jan, price: found.price, productName: found.item.itemName ?? p.name, itemUrl: found.item.itemUrl ?? null, shopName: found.item.shopName ?? null, source: "rakuten-ichiba-item-search", matchedKeyword: keyword, elapsedMs: Date.now() - started, error: null });
