@@ -11,10 +11,15 @@ type ProductHit = {
   productUrlPC?: string;
   productUrlMobile?: string;
   searchUrl?: string;
-  salesItemCount?: number | string | null;
-  usedExcludeSalesItemCount?: number | string | null;
-  salesMinPrice?: number | string | null;
-  usedExcludeSalesMinPrice?: number | string | null;
+};
+type ItemHit = {
+  itemName?: string;
+  itemCode?: string;
+  itemPrice?: number | string | null;
+  itemPriceMin3?: number | string | null;
+  itemUrl?: string;
+  shopName?: string;
+  shopCode?: string;
 };
 type DebugEntry = {
   api: string;
@@ -34,6 +39,7 @@ type DebugEntry = {
 };
 
 const PRODUCT_API = "https://openapi.rakuten.co.jp/ichibaproduct/api/Product/Search/20250801";
+const ITEM_API = "https://openapi.rakuten.co.jp/ichibams/api/IchibaItem/Search/20260701";
 
 const cleanJan = (v: unknown) => String(v ?? "").replace(/\D/g, "").slice(0, 13);
 const cleanText = (v: unknown) => String(v ?? "").replace(/[\s　]+/g, " ").trim();
@@ -43,6 +49,11 @@ const priceOf = (v: unknown) => {
   return Number.isFinite(n) && n > 0 ? n : null;
 };
 
+function compactResponseKeys(data: any) {
+  if (!data || typeof data !== "object") return [];
+  return Object.keys(data).slice(0, 40);
+}
+
 function productHitsOf(data: any): ProductHit[] {
   if (!Array.isArray(data?.items)) return [];
   return data.items
@@ -50,12 +61,40 @@ function productHitsOf(data: any): ProductHit[] {
     .filter((x: any) => x && typeof x === "object");
 }
 
-function compactResponseKeys(data: any) {
-  if (!data || typeof data !== "object") return [];
-  return Object.keys(data).slice(0, 40);
+function itemHitsOf(data: any): ItemHit[] {
+  if (!Array.isArray(data?.items)) return [];
+  return data.items
+    .map((x: any) => x?.item ?? x)
+    .filter((x: any) => x && typeof x === "object");
 }
 
-async function productSearchByJan(
+const EXCLUDED_WORDS = [
+  "中古",
+  "ユーズド",
+  "used",
+  "ジャンク",
+  "訳あり",
+  "訳有り",
+  "展示品",
+  "開封済み",
+  "開封品",
+  "箱なし",
+  "箱無し",
+  "本体のみ",
+  "パーツ",
+  "部品",
+];
+
+function looksUsedOrDamaged(name: string) {
+  const lower = name.toLowerCase();
+  return EXCLUDED_WORDS.some((word) => lower.includes(word.toLowerCase()));
+}
+
+function pickItemPrice(item: ItemHit) {
+  return priceOf(item.itemPriceMin3) ?? priceOf(item.itemPrice);
+}
+
+async function rakutenProductByJan(
   appId: string,
   accessKey: string,
   jan: string,
@@ -66,29 +105,7 @@ async function productSearchByJan(
   url.searchParams.set("format", "json");
   url.searchParams.set("formatVersion", "2");
   url.searchParams.set("applicationId", appId);
-  // Access key is supported by Rakuten in either the header or query parameter.
-  // Keep it in the header only so it can never leak into a logged request URL.
   url.searchParams.set("productCode", jan);
-  // Ask only for fields needed by this screen. These are common parameters and
-  // may be used together with productCode.
-  url.searchParams.set(
-    "elements",
-    [
-      "productId",
-      "productCode",
-      "productName",
-      "productNo",
-      "brandName",
-      "makerName",
-      "productUrlPC",
-      "productUrlMobile",
-      "searchUrl",
-      "salesItemCount",
-      "usedExcludeSalesItemCount",
-      "salesMinPrice",
-      "usedExcludeSalesMinPrice",
-    ].join(","),
-  );
 
   debug.api = "ProductSearch(JAN)";
   debug.query = jan;
@@ -101,10 +118,7 @@ async function productSearchByJan(
       method: "GET",
       cache: "no-store",
       signal: controller.signal,
-      headers: {
-        Accept: "application/json",
-        accessKey,
-      },
+      headers: { Accept: "application/json", accessKey },
     });
 
     const text = await response.text();
@@ -124,11 +138,70 @@ async function productSearchByJan(
     debug.message = response.ok
       ? undefined
       : data?.error_description || data?.error || text.slice(0, 500);
-    debug.sample = hits.slice(0, 3).map((p) => ({
-      name: cleanText(`${p.productName ?? ""} ${p.productNo ?? ""} ${p.brandName ?? ""}`),
-      price: priceOf(p.usedExcludeSalesMinPrice) ?? priceOf(p.salesMinPrice),
-      url: p.productUrlPC ?? p.searchUrl ?? null,
-      shop: p.makerName ?? p.brandName ?? null,
+
+    return { response, data, hits };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function rakutenItemsByKeyword(
+  appId: string,
+  accessKey: string,
+  keyword: string,
+  debug: DebugEntry,
+) {
+  const started = Date.now();
+  const url = new URL(ITEM_API);
+  url.searchParams.set("format", "json");
+  url.searchParams.set("formatVersion", "2");
+  url.searchParams.set("applicationId", appId);
+  url.searchParams.set("keyword", keyword.slice(0, 128));
+  url.searchParams.set("sort", "+itemPrice");
+  url.searchParams.set("availability", "1");
+  url.searchParams.set("field", "1");
+  url.searchParams.set("hits", "30");
+  url.searchParams.set(
+    "elements",
+    ["itemName", "itemCode", "itemPrice", "itemPriceMin3", "itemUrl", "shopName", "shopCode"].join(","),
+  );
+
+  debug.api = "IchibaItemSearch";
+  debug.query = keyword;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12000);
+
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      cache: "no-store",
+      signal: controller.signal,
+      headers: { Accept: "application/json", accessKey },
+    });
+
+    const text = await response.text();
+    let data: any = {};
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      data = { raw: text.slice(0, 1000) };
+    }
+
+    const hits = itemHitsOf(data);
+    debug.status = response.status;
+    debug.count = Number(data?.count ?? hits.length);
+    debug.returned = hits.length;
+    debug.elapsedMs = Date.now() - started;
+    debug.responseKeys = compactResponseKeys(data);
+    debug.message = response.ok
+      ? undefined
+      : data?.error_description || data?.error || text.slice(0, 500);
+    debug.sample = hits.slice(0, 5).map((item) => ({
+      name: cleanText(item.itemName),
+      price: pickItemPrice(item),
+      url: item.itemUrl ?? null,
+      shop: item.shopName ?? null,
     }));
 
     return { response, data, hits };
@@ -147,7 +220,7 @@ export async function POST(request: NextRequest) {
         error: "楽天APIの環境変数が未設定です。",
         results: [],
         debug: [{
-          api: "ProductSearch(JAN)",
+          api: "Rakuten",
           status: 503,
           message: `RAKUTEN_APPLICATION_ID=${appId ? "OK" : "MISSING"}, RAKUTEN_ACCESS_KEY=${accessKey ? "OK" : "MISSING"}`,
         }],
@@ -160,10 +233,7 @@ export async function POST(request: NextRequest) {
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json(
-      { error: "JSONが不正です。", results: [] },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: "JSONが不正です。", results: [] }, { status: 400 });
   }
 
   const raw = Array.isArray(body?.products) ? body.products : [];
@@ -179,104 +249,129 @@ export async function POST(request: NextRequest) {
   const unique = Array.from(new Map(products.map((p) => [p.jan, p])).values()).slice(0, 5);
 
   if (!unique.length) {
-    return NextResponse.json(
-      { error: "有効な13桁JANの商品がありません。", results: [] },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: "有効な13桁JANの商品がありません。", results: [] }, { status: 400 });
   }
 
   const results: any[] = [];
 
-  // One JAN = one Product Search request. Do not fan out to multiple Rakuten
-  // searches unless the caller explicitly supplies another product.
   for (const p of unique) {
-    const debug: DebugEntry = { api: "ProductSearch(JAN)", query: p.jan };
+    const debugProduct: DebugEntry = { api: "ProductSearch(JAN)", query: p.jan };
+    const debugItems: DebugEntry = { api: "IchibaItemSearch", query: "" };
     const started = Date.now();
 
     try {
-      const { response, data, hits } = await productSearchByJan(
-        appId,
-        accessKey,
-        p.jan,
-        debug,
-      );
-      const hit = hits[0];
+      const productLookup = await rakutenProductByJan(appId, accessKey, p.jan, debugProduct);
 
-      if (!response.ok) {
-        const is429 = response.status === 429;
+      if (!productLookup.response.ok) {
+        const is429 = productLookup.response.status === 429;
         results.push({
           jan: p.jan,
           price: null,
           productName: p.name,
           candidateCount: 0,
           elapsedMs: Date.now() - started,
-          debug: [debug],
+          debug: [debugProduct],
           error: is429
-            ? "楽天APIがアクセス制限(429)を返しました。少し時間を置いて再検索してください。"
-            : `楽天Product Search ${response.status}: ${debug.message || "APIエラー"}`,
+            ? "楽天Product Searchがアクセス制限(429)を返しました。"
+            : `楽天Product Search ${productLookup.response.status}: ${debugProduct.message || "APIエラー"}`,
         });
         continue;
       }
 
-      if (!hit) {
+      const product = productLookup.hits[0];
+      const resolvedName = cleanText(product?.productName) || p.name;
+      const resolvedModel = cleanText(product?.productNo) || p.model;
+      const resolvedBrand = cleanText(product?.makerName || product?.brandName) || p.brand;
+
+      // Product Search's price fields are no longer reliable for current data.
+      // Use it only to resolve the product identity, then get live purchasable
+      // listings from Ichiba Item Search sorted by price ascending.
+      const searchParts = [resolvedBrand, resolvedName, resolvedModel].filter(Boolean);
+      const keyword = cleanText(searchParts.join(" "));
+
+      if (!keyword || keyword.length < 2) {
         results.push({
           jan: p.jan,
           price: null,
-          productName: p.name,
+          productName: resolvedName || p.name,
           candidateCount: 0,
           elapsedMs: Date.now() - started,
-          debug: [debug],
-          error: "このJANに一致する楽天プロダクト製品が見つかりませんでした。",
+          debug: [debugProduct],
+          error: "楽天の商品名を取得できず、市場検索条件を作れませんでした。",
         });
         continue;
       }
 
-      const newLowest = priceOf(hit.usedExcludeSalesMinPrice);
-      const fallbackLowest = priceOf(hit.salesMinPrice);
-      const price = newLowest ?? fallbackLowest;
-      const salesCount = Number(hit.usedExcludeSalesItemCount ?? hit.salesItemCount ?? 0);
+      const itemLookup = await rakutenItemsByKeyword(appId, accessKey, keyword, debugItems);
+      const candidates = itemLookup.hits
+        .map((item) => ({ item, price: pickItemPrice(item) }))
+        .filter(({ item, price }) => price != null && !looksUsedOrDamaged(cleanText(item.itemName)))
+        .sort((a, b) => (a.price as number) - (b.price as number));
+
+      const best = candidates[0];
+
+      if (!itemLookup.response.ok) {
+        const is429 = itemLookup.response.status === 429;
+        results.push({
+          jan: p.jan,
+          price: null,
+          productName: resolvedName || p.name,
+          candidateCount: 0,
+          elapsedMs: Date.now() - started,
+          debug: [debugProduct, debugItems],
+          error: is429
+            ? "楽天Ichiba Item Searchがアクセス制限(429)を返しました。"
+            : `楽天Ichiba Item Search ${itemLookup.response.status}: ${debugItems.message || "APIエラー"}`,
+        });
+        continue;
+      }
+
+      if (!best) {
+        results.push({
+          jan: p.jan,
+          price: null,
+          productName: resolvedName || p.name,
+          candidateCount: 0,
+          elapsedMs: Date.now() - started,
+          debug: [debugProduct, debugItems],
+          error: "楽天市場の購入可能な新品候補を取得できませんでした。",
+          responseDiagnostics: {
+            productKeys: product ? Object.keys(product).slice(0, 50) : [],
+            itemKeys: itemLookup.hits[0] ? Object.keys(itemLookup.hits[0]).slice(0, 50) : [],
+          },
+        });
+        continue;
+      }
+
+      const price = best.price as number;
+      const item = best.item;
+      const productPage = product?.productUrlPC ?? product?.searchUrl ?? null;
 
       results.push({
         jan: p.jan,
         price,
-        // Aliases keep this route compatible with older front-end field names.
         rakutenLowestPrice: price,
         lowestPrice: price,
-        productName: cleanText(hit.productName) || p.name,
-        itemUrl: hit.productUrlPC ?? hit.searchUrl ?? null,
-        shopName: hit.makerName ?? hit.brandName ?? null,
-        source: "Rakuten Product Search",
-        matchedBy: "JAN",
-        candidateCount: salesCount,
+        productName: cleanText(item.itemName) || resolvedName || p.name,
+        itemUrl: item.itemUrl ?? productPage,
+        shopName: item.shopName ?? resolvedBrand ?? null,
+        source: "Rakuten Ichiba Item Search",
+        matchedBy: "JAN→Product Search→Item Search",
+        candidateCount: candidates.length,
         elapsedMs: Date.now() - started,
         resolvedProduct: {
-          productId: hit.productId ?? null,
-          productCode: hit.productCode ?? p.jan,
-          productName: hit.productName ?? null,
-          productNo: hit.productNo ?? null,
-          brandName: hit.brandName ?? null,
-          makerName: hit.makerName ?? null,
-          productUrlPC: hit.productUrlPC ?? null,
-          searchUrl: hit.searchUrl ?? null,
+          productId: product?.productId ?? null,
+          productCode: product?.productCode ?? p.jan,
+          productName: product?.productName ?? null,
+          productNo: product?.productNo ?? null,
+          brandName: product?.brandName ?? null,
+          makerName: product?.makerName ?? null,
+          productUrlPC: product?.productUrlPC ?? null,
+          searchUrl: product?.searchUrl ?? null,
         },
-        priceSource: newLowest != null
-          ? "usedExcludeSalesMinPrice"
-          : fallbackLowest != null
-            ? "salesMinPrice(fallback)"
-            : null,
-        salesItemCount: Number(hit.salesItemCount ?? 0),
-        usedExcludeSalesItemCount: Number(hit.usedExcludeSalesItemCount ?? 0),
-        salesMinPrice: fallbackLowest,
-        usedExcludeSalesMinPrice: newLowest,
-        debug: [debug],
-        error: price == null
-          ? "楽天プロダクトは見つかりましたが、新品最安値フィールドがnullでした。APIレスポンスを確認してください。"
-          : null,
-        // Safe diagnostics only; never return credentials or the full response.
-        responseDiagnostics: {
-          topLevelKeys: compactResponseKeys(data),
-          itemKeys: Object.keys(hit).slice(0, 50),
-        },
+        priceSource: "itemPriceMin3/itemPrice",
+        debug: [debugProduct, debugItems],
+        error: null,
       });
     } catch (error: any) {
       results.push({
@@ -284,7 +379,7 @@ export async function POST(request: NextRequest) {
         price: null,
         productName: p.name,
         elapsedMs: Date.now() - started,
-        debug: [debug],
+        debug: [debugProduct, debugItems],
         error:
           error?.name === "AbortError"
             ? "楽天APIが12秒以内に応答しませんでした。"
