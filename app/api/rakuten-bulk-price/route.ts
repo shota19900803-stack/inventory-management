@@ -58,7 +58,6 @@ async function productSearchByJan(appId: string, accessKey: string, jan: string,
   const { response, data } = await requestJson(url, accessKey, d, "ProductSearch(JAN)");
   const products = productItemsOf(data);
   d.count = Number(data?.count ?? products.length);
-  // Since 2026-03-25 Rakuten may return price aggregate fields as null.
   d.price = products[0] ? (priceOf(products[0].usedExcludeSalesMinPrice) ?? priceOf(products[0].salesMinPrice)) : null;
   debug.push(d);
   return response.ok ? products[0] ?? null : null;
@@ -97,16 +96,12 @@ function searchTerms(product: Product, resolved: RakutenProduct | null) {
   const model = cleanText(resolved?.productNo || product.model);
   const brand = cleanText(resolved?.brandName || product.brand);
   const out: string[] = [];
-
-  // Keep the strongest identifiers first. The JAN is also tried directly
-  // because some Rakuten item titles include the JAN code.
   if (product.jan) out.push(product.jan);
   if (model) out.push(model);
   if (name) out.push(name);
   const tokens = significantTokens(name);
   if (tokens.length >= 2) out.push(tokens.slice(0, 4).join(" "));
   if (brand && name) out.push(`${brand} ${tokens.slice(0, 4).join(" ")}`.trim());
-
   return Array.from(new Set(out.map(cleanText).filter((q) => q.length >= 2))).slice(0, 5);
 }
 
@@ -140,19 +135,18 @@ function chooseLowestNew(items: RakutenItem[], product: Product, resolved: Rakut
     const hasModel = model.length >= 3 && norm.includes(model);
     const hasFullName = reference.length >= 4 && norm.includes(reference);
     const tokenHits = qTokens.filter((t) => t.length >= 2 && norm.includes(compact(t))).length;
-    const queryIsJan = q === compact(jan);
     const score = (hasJan ? 100000 : 0) + (hasModel ? 10000 : 0) + (hasFullName ? 5000 : 0) + tokenHits * 100;
-    return { item, price, score, hasJan, hasModel, hasFullName, tokenHits, queryIsJan };
+    return { item, price, score, hasJan, hasModel, hasFullName, tokenHits };
   });
 
-  // A direct JAN search is only accepted when the listing actually exposes
-  // that JAN. For product-name/model searches, the query itself is already an
-  // AND search in Rakuten, so use the cheapest eligible result rather than
-  // rejecting valid listings because their title wording differs slightly.
+  // A JAN query is already the strongest identifier supplied to Rakuten's
+  // keyword search. Rakuten itemCode is a shop-specific code, and JAN is not
+  // guaranteed to appear in the returned title/code. Requiring the JAN to be
+  // echoed back here was causing valid listings (including the test product)
+  // to be discarded and reported as "not retrieved".
   if (q === compact(jan)) {
-    const janMatches = scored.filter((x) => x.hasJan);
-    janMatches.sort((a, b) => a.price - b.price);
-    return janMatches[0] ?? null;
+    scored.sort((a, b) => a.price - b.price);
+    return scored[0] ?? null;
   }
 
   const confident = scored.filter((x) => x.hasJan || x.hasModel || x.hasFullName || x.tokenHits >= Math.min(3, Math.max(1, qTokens.length)));
@@ -179,10 +173,6 @@ export async function POST(request: NextRequest) {
     const started = Date.now();
     try {
       const resolved = await productSearchByJan(appId, accessKey, p.jan, debug);
-      // Rakuten documents these aggregate price fields as nullable and has
-      // announced that several of them may be returned as null. Do not make
-      // the entire feature depend on them; actual Ichiba listings are the
-      // authoritative fallback for the current implementation.
       const aggregatedPrice = resolved ? priceOf(resolved.usedExcludeSalesMinPrice) : null;
 
       if (aggregatedPrice != null) {
@@ -192,15 +182,8 @@ export async function POST(request: NextRequest) {
 
       let chosen: { item: RakutenItem; price: number } | null = null;
       let source = "";
-      const allItems: RakutenItem[] = [];
-      const seen = new Set<string>();
-
       for (const q of searchTerms(p, resolved)) {
         const items = await ichibaSearch(appId, accessKey, q, debug);
-        for (const item of items) {
-          const key = String(item.itemCode ?? `${item.itemName ?? ""}|${item.itemPrice ?? ""}`);
-          if (!seen.has(key)) { seen.add(key); allItems.push(item); }
-        }
         const current = chooseLowestNew(items, p, resolved, q);
         if (current) { chosen = current; source = `IchibaItemSearch:${q}`; break; }
       }
