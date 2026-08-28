@@ -21,6 +21,7 @@ type Debug = {
   elapsedMs?: number;
   message?: string;
   sample?: Array<{ name: string; price: number | null; shop: string | null }>;
+  product?: Record<string, unknown> | null;
 };
 
 const ITEM_API = "https://openapi.rakuten.co.jp/ichibams/api/IchibaItem/Search/20260701";
@@ -108,8 +109,7 @@ async function lookupProductByJan(appId: string, accessKey: string, jan: string,
   url.searchParams.set("formatVersion", "2");
   url.searchParams.set("applicationId", appId);
   url.searchParams.set("accessKey", accessKey);
-  // productCode is the JAN. Rakuten documents it as mutually exclusive with
-  // service-specific parameters such as hits/page/sort.
+  // productCode(JAN) must be used alone among service-specific parameters.
   url.searchParams.set("productCode", jan);
   debug.api = "ProductSearch(JAN)";
   debug.query = jan;
@@ -123,7 +123,75 @@ async function lookupProductByJan(appId: string, accessKey: string, jan: string,
   debug.returned = first ? 1 : 0;
   debug.elapsedMs = Date.now() - started;
   debug.message = response.ok ? undefined : data?.error_description || data?.error || "APIエラー";
+  if (first && typeof first === "object") {
+    debug.product = {
+      productId: first.productId,
+      productCode: first.productCode,
+      productName: first.productName,
+      productNo: first.productNo,
+      brandName: first.brandName,
+      itemCount: first.itemCount,
+      salesItemCount: first.salesItemCount,
+      usedExcludeSalesItemCount: first.usedExcludeSalesItemCount,
+      minPrice: first.minPrice,
+      salesMinPrice: first.salesMinPrice,
+      usedExcludeMinPrice: first.usedExcludeMinPrice,
+      usedExcludeSalesMinPrice: first.usedExcludeSalesMinPrice,
+    };
+  }
   return { response, product: first && typeof first === "object" ? first : null };
+}
+
+async function lookupProductByKeyword(appId: string, accessKey: string, query: string, debug: Debug) {
+  const started = Date.now();
+  const url = new URL(PRODUCT_API);
+  url.searchParams.set("format", "json");
+  url.searchParams.set("formatVersion", "2");
+  url.searchParams.set("applicationId", appId);
+  url.searchParams.set("accessKey", accessKey);
+  url.searchParams.set("keyword", query.slice(0, 128));
+  url.searchParams.set("hits", "30");
+  url.searchParams.set("page", "1");
+
+  debug.api = "ProductSearch(keyword)";
+  debug.query = query;
+
+  const { response, data } = await getJson(url, accessKey);
+  const products = Array.isArray(data?.items)
+    ? data.items.map((x: any) => x?.product ?? x?.item ?? x).filter((x: any) => x && typeof x === "object")
+    : [];
+
+  debug.status = response.status;
+  debug.count = Number(data?.count ?? products.length);
+  debug.returned = products.length;
+  debug.elapsedMs = Date.now() - started;
+  debug.message = response.ok ? undefined : data?.error_description || data?.error || "APIエラー";
+
+  return { response, products };
+}
+
+function exactProductByJan(products: any[], jan: string, model: string, name: string) {
+  const targetJan = cleanJan(jan);
+  const targetModel = norm(model);
+  const targetName = norm(name);
+
+  const janMatch = products.find((x) => cleanJan(x?.productCode) === targetJan);
+  if (janMatch) return janMatch;
+
+  if (targetModel) {
+    const modelMatch = products.find((x) => norm(x?.productNo) === targetModel);
+    if (modelMatch) return modelMatch;
+  }
+
+  if (targetName) {
+    const nameMatch = products.find((x) => {
+      const n = norm(x?.productName);
+      return n && (n === targetName || n.includes(targetName) || targetName.includes(n));
+    });
+    if (nameMatch) return nameMatch;
+  }
+
+  return null;
 }
 
 function queryCandidates(p: Product, resolved: any) {
@@ -216,17 +284,14 @@ export async function POST(request: NextRequest) {
 
     try {
       const lookup = await lookupProductByJan(appId, accessKey, p.jan, productDebug);
-      const resolved = lookup.product;
-      const resolvedName = clean(resolved?.productName) || p.name;
+      let resolved = lookup.product;
+      let resolvedName = clean(resolved?.productName) || p.name;
 
-      // IMPORTANT: Product Search already exposes the exact product-level
-      // "usedExcludeSalesMinPrice" field (lowest purchasable price excluding
-      // used items). Prefer it when available. This avoids fuzzy Item Search
-      // matching and is the most accurate source for a JAN-specific lookup.
-      const exactNewLowest =
-        price(resolved?.usedExcludeSalesMinPrice) ??
-        price(resolved?.salesMinPrice);
+      const exactNewLowest = resolved
+        ? price(resolved?.usedExcludeSalesMinPrice) ?? price(resolved?.salesMinPrice)
+        : null;
 
+      // Primary path: JAN exact product + Product Search price data.
       if (lookup.response.ok && exactNewLowest != null) {
         results.push({
           jan: p.jan,
@@ -240,15 +305,61 @@ export async function POST(request: NextRequest) {
           matchedBy: "JAN",
           candidateCount: 0,
           elapsedMs: Date.now() - started,
-          priceSource: resolved?.usedExcludeSalesMinPrice != null
-            ? "usedExcludeSalesMinPrice"
-            : "salesMinPrice",
+          priceSource: resolved?.usedExcludeSalesMinPrice != null ? "usedExcludeSalesMinPrice" : "salesMinPrice",
           debug: [productDebug],
           error: null,
         });
         continue;
       }
 
+      // Recovery path: Product Search by a compact product keyword, then require
+      // an exact JAN/model/name match before accepting its product-level price.
+      const productQueries = Array.from(new Set([
+        clean(resolved?.productNo),
+        clean(p.model),
+        clean(resolved?.productName),
+        clean(p.name),
+      ].filter((x) => x.length >= 2))).slice(0, 3);
+
+      for (const query of productQueries) {
+        const d: Debug = { api: "ProductSearch(keyword)", query };
+        const searched = await lookupProductByKeyword(appId, accessKey, query, d);
+        searchDebug.push(d);
+        if (!searched.response.ok) continue;
+
+        const exact = exactProductByJan(searched.products, p.jan, p.model, p.name);
+        if (!exact) continue;
+
+        const exactPrice = price(exact?.usedExcludeSalesMinPrice) ?? price(exact?.salesMinPrice);
+        if (exactPrice == null) continue;
+
+        resolved = exact;
+        resolvedName = clean(exact?.productName) || resolvedName;
+        results.push({
+          jan: p.jan,
+          price: exactPrice,
+          rakutenLowestPrice: exactPrice,
+          lowestPrice: exactPrice,
+          productName: resolvedName,
+          itemUrl: exact?.productUrlPC ?? exact?.productUrlMobile ?? null,
+          shopName: null,
+          source: "Rakuten Product Search (exact match)",
+          matchedBy: query,
+          candidateCount: searched.products.length,
+          elapsedMs: Date.now() - started,
+          priceSource: exact?.usedExcludeSalesMinPrice != null ? "usedExcludeSalesMinPrice" : "salesMinPrice",
+          debug: [productDebug, ...searchDebug],
+          error: null,
+        });
+        resolved = exact;
+        break;
+      }
+
+      if (results[results.length - 1]?.jan === p.jan && results[results.length - 1]?.error === null) continue;
+
+      // Last resort: live Ichiba item search. This is deliberately secondary so
+      // the app does not depend on fuzzy matching when a JAN-exact product price
+      // is available from Product Search.
       const queries = queryCandidates(p, resolved);
       let chosen: { item: Item; p: number } | null = null;
       let matchedBy = "";
@@ -269,7 +380,7 @@ export async function POST(request: NextRequest) {
         }
 
         candidateCount += search.hits.length;
-        const picked = choose(search.hits, resolvedName);
+        const picked = choose(search.hits, clean(resolved?.productName) || p.name);
         if (picked) {
           chosen = picked;
           matchedBy = query;
@@ -305,10 +416,16 @@ export async function POST(request: NextRequest) {
               count: productDebug.count,
               returned: productDebug.returned,
               message: productDebug.message,
-              exactNewLowest: exactNewLowest,
-              resolvedName,
+              product: productDebug.product,
             },
-            itemSearches: searchDebug.map((d) => ({
+            productKeywordSearches: searchDebug.filter((d) => d.api === "ProductSearch(keyword)").map((d) => ({
+              query: d.query,
+              status: d.status,
+              count: d.count,
+              returned: d.returned,
+              message: d.message,
+            })),
+            itemSearches: searchDebug.filter((d) => d.api === "IchibaItemSearch").map((d) => ({
               query: d.query,
               status: d.status,
               count: d.count,
