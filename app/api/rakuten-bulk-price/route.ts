@@ -39,11 +39,14 @@ async function searchProduct(appId: string, accessKey: string, jan: string) {
   url.searchParams.set("format", "json");
   url.searchParams.set("formatVersion", "2");
   url.searchParams.set("applicationId", appId);
-  // Access Keyはヘッダーだけでなくクエリにも指定し、環境差による認証失敗を防ぐ。
   url.searchParams.set("accessKey", accessKey);
   url.searchParams.set("productCode", jan);
-  url.searchParams.set("hits", "30");
-  url.searchParams.set("elements", "productId,productCode,productName,productNo,brandName,itemCount,salesItemCount,usedExcludeCount,usedExcludeSalesItemCount,minPrice,salesMinPrice,usedExcludeMinPrice,usedExcludeSalesMinPrice");
+  // productCode(JAN)指定時は、service-specific parameters such as hits/sort/page
+  // cannot be combined. elements/formatVersion are common parameters and are allowed.
+  url.searchParams.set(
+    "elements",
+    "productId,productCode,productName,productNo,brandName,itemCount,salesItemCount,usedExcludeCount,usedExcludeSalesItemCount,minPrice,salesMinPrice,usedExcludeMinPrice,usedExcludeSalesMinPrice"
+  );
   return fetchJson(url, accessKey);
 }
 
@@ -134,38 +137,83 @@ export async function POST(request: NextRequest) {
   for (let i = 0; i < unique.length; i += 1) {
     const p = unique[i];
     try {
-      const r = await searchProduct(appId, accessKey, p.jan);
-      if (r.response.ok) {
-        const item = unwrapItems(r.data)[0];
-        if (item) {
-          // 新品最安値 = 中古を除く購入可能な最低価格。旧形式/欠損時はsalesMinPriceへフォールバック。
-          const price = Number(item.usedExcludeSalesMinPrice ?? item.salesMinPrice ?? 0);
-          if (Number.isFinite(price) && price > 0) {
-            results.push({ jan: p.jan, price, productName: item.productName ?? p.name ?? null, productCode: item.productCode ?? p.jan, salesItemCount: Number(item.usedExcludeSalesItemCount ?? item.salesItemCount ?? 0) || null, source: "rakuten-product-search-new-only", error: null });
-            if (i < unique.length - 1) await sleep(700);
-            continue;
+      let productApiError = "";
+      let productApiSucceeded = false;
+
+      // ① JAN完全一致：楽天商品価格ナビ
+      try {
+        const r = await searchProduct(appId, accessKey, p.jan);
+        if (r.response.ok) {
+          productApiSucceeded = true;
+          const item = unwrapItems(r.data)[0];
+          if (item) {
+            // 新品最安値 = 中古を除く購入可能な最低価格。
+            const price = Number(item.usedExcludeSalesMinPrice ?? 0);
+            if (Number.isFinite(price) && price > 0) {
+              results.push({
+                jan: p.jan,
+                price,
+                productName: item.productName ?? p.name ?? null,
+                productCode: item.productCode ?? p.jan,
+                salesItemCount: Number(item.usedExcludeSalesItemCount ?? 0) || null,
+                source: "rakuten-product-search-new-only",
+                error: null,
+              });
+              if (i < unique.length - 1) await sleep(700);
+              continue;
+            }
+            productApiError = "楽天の商品価格ナビに製品はありますが、新品の購入可能価格がありません。";
+          } else {
+            productApiError = "楽天の商品価格ナビでJANに一致する製品が見つかりませんでした。";
           }
+        } else {
+          productApiError = r.data?.error_description || r.data?.error || `楽天商品価格ナビ HTTP ${r.response.status}`;
         }
+      } catch (error: any) {
+        productApiError = error?.name === "AbortError" ? "楽天商品価格ナビがタイムアウトしました。" : error?.message || "楽天商品価格ナビへの接続に失敗しました。";
       }
 
-      // 商品価格ナビで価格が取れない商品だけ、楽天市場の商品検索へフォールバック。
+      // ② JAN / 商品情報で楽天市場の商品検索へフォールバック
       let candidate: any = null;
+      let itemApiError = "";
       for (const keyword of [p.jan, ...keywordCandidates(p)]) {
-        const r2 = await searchItems(appId, accessKey, keyword);
-        if (r2.response.ok) {
-          candidate = chooseItem(unwrapItems(r2.data), p);
-          if (candidate) break;
+        try {
+          const r2 = await searchItems(appId, accessKey, keyword);
+          if (r2.response.ok) {
+            candidate = chooseItem(unwrapItems(r2.data), p);
+            if (candidate) break;
+          } else if (!itemApiError) {
+            itemApiError = r2.data?.error_description || r2.data?.error || `楽天市場商品検索 HTTP ${r2.response.status}`;
+          }
+        } catch (error: any) {
+          if (!itemApiError) itemApiError = error?.name === "AbortError" ? "楽天市場商品検索がタイムアウトしました。" : error?.message || "楽天市場商品検索への接続に失敗しました。";
         }
         await sleep(250);
       }
+
       if (candidate) {
-        results.push({ jan: p.jan, price: candidate.price, productName: candidate.item.itemName ?? p.name ?? null, itemUrl: candidate.item.itemUrl ?? null, shopName: candidate.item.shopName ?? null, source: "rakuten-ichiba-item-search", error: null });
+        results.push({
+          jan: p.jan,
+          price: candidate.price,
+          productName: candidate.item.itemName ?? p.name ?? null,
+          itemUrl: candidate.item.itemUrl ?? null,
+          shopName: candidate.item.shopName ?? null,
+          source: "rakuten-ichiba-item-search",
+          error: null,
+        });
       } else {
-        const detail = r.data?.error_description || r.data?.error || "楽天の商品価格ナビで新品価格を取得できませんでした。";
-        results.push({ jan: p.jan, price: null, error: detail });
+        results.push({
+          jan: p.jan,
+          price: null,
+          error: productApiError || itemApiError || (productApiSucceeded ? "楽天市場で新品価格を確認できませんでした。" : "楽天APIから価格を取得できませんでした。"),
+        });
       }
     } catch (error: any) {
-      results.push({ jan: p.jan, price: null, error: error?.name === "AbortError" ? "楽天APIがタイムアウトしました。" : error?.message || "楽天APIへの接続に失敗しました。" });
+      results.push({
+        jan: p.jan,
+        price: null,
+        error: error?.name === "AbortError" ? "楽天APIがタイムアウトしました。" : error?.message || "楽天APIへの接続に失敗しました。",
+      });
     }
     if (i < unique.length - 1) await sleep(700);
   }
