@@ -8,6 +8,11 @@ type DebugEntry = {
   count?: number;
   message?: string;
   attempts?: number;
+  returned?: number;
+  available?: number;
+  excluded?: number;
+  priced?: number;
+  sample?: Array<{ name: string; price: number | null; url: string | null; shop: string | null }>;
 };
 type RakutenItem = {
   itemName?: string;
@@ -35,8 +40,6 @@ const priceOf = (v: unknown) => {
   return Number.isFinite(n) && n > 0 ? n : null;
 };
 
-// These are filtered locally instead of being sent as Rakuten NGKeyword.
-// NGKeyword can hide legitimate listings before we can inspect them.
 const EXCLUDED = [
   "中古", "中古品", "ユーズド", "used", "ジャンク", "ジャンク品",
   "開封済み", "開封済", "開封品", "箱なし", "箱無", "欠品", "訳あり",
@@ -62,8 +65,12 @@ function significantTokens(value: string) {
     .slice(0, 8);
 }
 
-function candidateItems(items: RakutenItem[]) {
-  return items
+function candidateItems(items: RakutenItem[], debug: DebugEntry) {
+  debug.returned = items.length;
+  debug.available = items.filter((item) => Number(item.availability ?? 1) === 1).length;
+  debug.excluded = items.filter((item) => Number(item.availability ?? 1) === 1 && isExcluded(item)).length;
+
+  const priced = items
     .filter((item) => Number(item.availability ?? 1) === 1)
     .filter((item) => !isExcluded(item))
     .map((item) => {
@@ -71,6 +78,16 @@ function candidateItems(items: RakutenItem[]) {
       return price == null ? null : { item, price };
     })
     .filter(Boolean) as Array<{ item: RakutenItem; price: number }>;
+
+  debug.priced = priced.length;
+  debug.sample = items.slice(0, 5).map((item) => ({
+    name: cleanText(item.itemName ?? ""),
+    price: priceOf(item.itemPriceMin3) ?? priceOf(item.itemPrice),
+    url: item.itemUrl ?? null,
+    shop: item.shopName ?? null,
+  }));
+
+  return priced;
 }
 
 function scoreCandidate(item: RakutenItem, product: Product, query: string, janSearch: boolean) {
@@ -95,49 +112,35 @@ function scoreCandidate(item: RakutenItem, product: Product, query: string, janS
   if (hasBrand) score += 2000;
   score += queryHits * 500;
   score += nameHits * 150;
-  // A result returned by an exact JAN query is already highly informative.
-  // Keep it above weak text-only matches, while still preferring explicit JAN/model hits.
   if (janSearch) score += 10000;
 
   return { score, hasJan, hasModel, hasBrand, queryHits, nameHits };
 }
 
 async function requestJson(url: URL, accessKey: string, debug: DebugEntry) {
-  let lastResponse: Response | null = null;
-  let lastData: any = {};
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12000);
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      cache: "no-store",
+      signal: controller.signal,
+      headers: { Accept: "application/json", accessKey },
+    });
+    const text = await response.text();
+    let data: any = {};
+    try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text.slice(0, 1000) }; }
 
-  for (let attempt = 1; attempt <= 2; attempt += 1) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 12000);
-    try {
-      const response = await fetch(url, {
-        method: "GET",
-        cache: "no-store",
-        signal: controller.signal,
-        headers: { Accept: "application/json", accessKey },
-      });
-      const text = await response.text();
-      let data: any = {};
-      try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text.slice(0, 1000) }; }
+    debug.status = response.status;
+    debug.attempts = 1;
+    debug.message = response.ok ? undefined : (data?.error_description || data?.error || text.slice(0, 500));
 
-      lastResponse = response;
-      lastData = data;
-      debug.status = response.status;
-      debug.attempts = attempt;
-      debug.message = response.ok ? undefined : (data?.error_description || data?.error || text.slice(0, 300));
-
-      // Rakuten documents 429 for request-limit excess. Give it one quiet retry.
-      if (response.status === 429 && attempt === 1) {
-        await new Promise((resolve) => setTimeout(resolve, 2500));
-        continue;
-      }
-      return { response, data };
-    } finally {
-      clearTimeout(timer);
-    }
+    // Do not immediately retry a rate-limit response. A retry can make a short
+    // restriction worse and would hide the real cause of the failed lookup.
+    return { response, data };
+  } finally {
+    clearTimeout(timer);
   }
-
-  return { response: lastResponse as Response, data: lastData };
 }
 
 async function ichibaSearch(appId: string, accessKey: string, keyword: string, debug: DebugEntry, janSearch = false) {
@@ -154,8 +157,6 @@ async function ichibaSearch(appId: string, accessKey: string, keyword: string, d
   url.searchParams.set("page", "1");
   url.searchParams.set("sort", "+itemPrice");
   url.searchParams.set("availability", "1");
-  // Restricted search is better for an exact JAN/model lookup. Broad search is used
-  // only for the final product-name fallback.
   url.searchParams.set("field", janSearch ? "1" : "0");
   url.searchParams.set("orFlag", "0");
   url.searchParams.set("purchaseType", "0");
@@ -164,8 +165,10 @@ async function ichibaSearch(appId: string, accessKey: string, keyword: string, d
   debug.api = janSearch ? "IchibaItemSearch(JAN)" : "IchibaItemSearch(keyword)";
   debug.query = q;
   const { response, data } = await requestJson(url, accessKey, debug);
-  debug.count = Number(data?.count ?? itemsOf(data).length);
-  return response?.ok ? itemsOf(data) : [];
+  const items = itemsOf(data);
+  debug.count = Number(data?.count ?? items.length);
+  const candidates = candidateItems(items, debug);
+  return response?.ok ? candidates.map((x) => x.item) : [];
 }
 
 function buildQueries(product: Product) {
@@ -218,13 +221,19 @@ export async function POST(request: NextRequest) {
     try {
       const all = new Map<string, { item: RakutenItem; price: number; query: string; janSearch: boolean }>();
       const queries = buildQueries(p);
+      let rateLimited = false;
 
       for (const target of queries) {
         const d: DebugEntry = { api: target.jan ? "IchibaItemSearch(JAN)" : "IchibaItemSearch(keyword)", query: target.q };
         const items = await ichibaSearch(appId, accessKey, target.q, d, target.jan);
         debug.push(d);
 
-        for (const candidate of candidateItems(items)) {
+        if (d.status === 429) {
+          rateLimited = true;
+          break;
+        }
+
+        for (const candidate of candidateItems(items, d)) {
           const key = candidate.item.itemUrl || `${candidate.item.shopCode ?? ""}:${candidate.item.itemCode ?? ""}` || `${candidate.item.itemName ?? ""}:${candidate.price}`;
           const existing = all.get(key);
           if (!existing || candidate.price < existing.price) {
@@ -232,10 +241,10 @@ export async function POST(request: NextRequest) {
           }
         }
 
-        // Stop after a successful JAN lookup. This is the critical change:
-        // do not hammer Rakuten with unnecessary fallback searches.
+        // A successful JAN search is enough. This keeps one-product testing cheap
+        // and avoids repeated identical/near-identical requests to Rakuten.
         if (target.jan && all.size > 0) break;
-        await new Promise((resolve) => setTimeout(resolve, 500));
+        await new Promise((resolve) => setTimeout(resolve, 800));
       }
 
       const ranked = Array.from(all.values()).map((x) => ({
@@ -277,6 +286,9 @@ export async function POST(request: NextRequest) {
         });
       } else {
         const apiErrors = debug.filter((d) => d.message).map((d) => `${d.api} ${d.status ?? "?"}: ${d.message}`).join(" / ");
+        const diagnostic = rateLimited
+          ? "楽天APIがアクセス制限(429)を返しました。追加検索は停止しています。"
+          : apiErrors || `楽天候補0件：${queries.map((x) => x.q).join(" / ") || "検索条件なし"}`;
         results.push({
           jan: p.jan,
           price: null,
@@ -285,7 +297,7 @@ export async function POST(request: NextRequest) {
           elapsedMs: Date.now() - started,
           candidates: topCandidates,
           debug,
-          error: apiErrors || `楽天候補0件：${queries.map((x) => x.q).join(" / ") || "検索条件なし"}`,
+          error: diagnostic,
         });
       }
     } catch (error: any) {
