@@ -9,10 +9,12 @@ type ProductHit = {
   brandName?: string;
   makerName?: string;
   productUrlPC?: string;
-  salesItemCount?: number | string;
-  usedExcludeSalesItemCount?: number | string;
-  salesMinPrice?: number | string;
-  usedExcludeSalesMinPrice?: number | string;
+  productUrlMobile?: string;
+  searchUrl?: string;
+  salesItemCount?: number | string | null;
+  usedExcludeSalesItemCount?: number | string | null;
+  salesMinPrice?: number | string | null;
+  usedExcludeSalesMinPrice?: number | string | null;
 };
 type DebugEntry = {
   api: string;
@@ -22,6 +24,7 @@ type DebugEntry = {
   returned?: number;
   message?: string;
   elapsedMs?: number;
+  responseKeys?: string[];
   sample?: Array<{
     name: string;
     price: number | null;
@@ -42,7 +45,14 @@ const priceOf = (v: unknown) => {
 
 function productHitsOf(data: any): ProductHit[] {
   if (!Array.isArray(data?.items)) return [];
-  return data.items.map((x: any) => x?.product ?? x?.item ?? x).filter(Boolean);
+  return data.items
+    .map((x: any) => x?.product ?? x?.item ?? x)
+    .filter((x: any) => x && typeof x === "object");
+}
+
+function compactResponseKeys(data: any) {
+  if (!data || typeof data !== "object") return [];
+  return Object.keys(data).slice(0, 40);
 }
 
 async function productSearchByJan(
@@ -56,13 +66,29 @@ async function productSearchByJan(
   url.searchParams.set("format", "json");
   url.searchParams.set("formatVersion", "2");
   url.searchParams.set("applicationId", appId);
-  url.searchParams.set("accessKey", accessKey);
-
-  // IMPORTANT: Rakuten's Product Search API documents productCode (JAN) as
-  // mutually exclusive with service-specific search parameters. In the JAN
-  // lookup route, do NOT send hits/elements/etc. Sending them together can
-  // turn an otherwise valid JAN lookup into an API error.
+  // Access key is supported by Rakuten in either the header or query parameter.
+  // Keep it in the header only so it can never leak into a logged request URL.
   url.searchParams.set("productCode", jan);
+  // Ask only for fields needed by this screen. These are common parameters and
+  // may be used together with productCode.
+  url.searchParams.set(
+    "elements",
+    [
+      "productId",
+      "productCode",
+      "productName",
+      "productNo",
+      "brandName",
+      "makerName",
+      "productUrlPC",
+      "productUrlMobile",
+      "searchUrl",
+      "salesItemCount",
+      "usedExcludeSalesItemCount",
+      "salesMinPrice",
+      "usedExcludeSalesMinPrice",
+    ].join(","),
+  );
 
   debug.api = "ProductSearch(JAN)";
   debug.query = jan;
@@ -75,7 +101,10 @@ async function productSearchByJan(
       method: "GET",
       cache: "no-store",
       signal: controller.signal,
-      headers: { Accept: "application/json", accessKey },
+      headers: {
+        Accept: "application/json",
+        accessKey,
+      },
     });
 
     const text = await response.text();
@@ -91,17 +120,18 @@ async function productSearchByJan(
     debug.count = Number(data?.count ?? hits.length);
     debug.returned = hits.length;
     debug.elapsedMs = Date.now() - started;
+    debug.responseKeys = compactResponseKeys(data);
     debug.message = response.ok
       ? undefined
       : data?.error_description || data?.error || text.slice(0, 500);
     debug.sample = hits.slice(0, 3).map((p) => ({
       name: cleanText(`${p.productName ?? ""} ${p.productNo ?? ""} ${p.brandName ?? ""}`),
       price: priceOf(p.usedExcludeSalesMinPrice) ?? priceOf(p.salesMinPrice),
-      url: p.productUrlPC ?? null,
+      url: p.productUrlPC ?? p.searchUrl ?? null,
       shop: p.makerName ?? p.brandName ?? null,
     }));
 
-    return { response, hits };
+    return { response, data, hits };
   } finally {
     clearTimeout(timer);
   }
@@ -113,7 +143,15 @@ export async function POST(request: NextRequest) {
 
   if (!appId || !accessKey) {
     return NextResponse.json(
-      { error: "楽天APIの環境変数が未設定です。", results: [] },
+      {
+        error: "楽天APIの環境変数が未設定です。",
+        results: [],
+        debug: [{
+          api: "ProductSearch(JAN)",
+          status: 503,
+          message: `RAKUTEN_APPLICATION_ID=${appId ? "OK" : "MISSING"}, RAKUTEN_ACCESS_KEY=${accessKey ? "OK" : "MISSING"}`,
+        }],
+      },
       { status: 503 },
     );
   }
@@ -149,13 +187,19 @@ export async function POST(request: NextRequest) {
 
   const results: any[] = [];
 
-  // One JAN = one Product Search request.
+  // One JAN = one Product Search request. Do not fan out to multiple Rakuten
+  // searches unless the caller explicitly supplies another product.
   for (const p of unique) {
     const debug: DebugEntry = { api: "ProductSearch(JAN)", query: p.jan };
     const started = Date.now();
 
     try {
-      const { response, hits } = await productSearchByJan(appId, accessKey, p.jan, debug);
+      const { response, data, hits } = await productSearchByJan(
+        appId,
+        accessKey,
+        p.jan,
+        debug,
+      );
       const hit = hits[0];
 
       if (!response.ok) {
@@ -195,8 +239,11 @@ export async function POST(request: NextRequest) {
       results.push({
         jan: p.jan,
         price,
+        // Aliases keep this route compatible with older front-end field names.
+        rakutenLowestPrice: price,
+        lowestPrice: price,
         productName: cleanText(hit.productName) || p.name,
-        itemUrl: hit.productUrlPC ?? null,
+        itemUrl: hit.productUrlPC ?? hit.searchUrl ?? null,
         shopName: hit.makerName ?? hit.brandName ?? null,
         source: "Rakuten Product Search",
         matchedBy: "JAN",
@@ -210,6 +257,7 @@ export async function POST(request: NextRequest) {
           brandName: hit.brandName ?? null,
           makerName: hit.makerName ?? null,
           productUrlPC: hit.productUrlPC ?? null,
+          searchUrl: hit.searchUrl ?? null,
         },
         priceSource: newLowest != null
           ? "usedExcludeSalesMinPrice"
@@ -221,7 +269,14 @@ export async function POST(request: NextRequest) {
         salesMinPrice: fallbackLowest,
         usedExcludeSalesMinPrice: newLowest,
         debug: [debug],
-        error: price == null ? "楽天プロダクトは見つかりましたが新品最安値が取得できませんでした。" : null,
+        error: price == null
+          ? "楽天プロダクトは見つかりましたが、新品最安値フィールドがnullでした。APIレスポンスを確認してください。"
+          : null,
+        // Safe diagnostics only; never return credentials or the full response.
+        responseDiagnostics: {
+          topLevelKeys: compactResponseKeys(data),
+          itemKeys: Object.keys(hit).slice(0, 50),
+        },
       });
     } catch (error: any) {
       results.push({
