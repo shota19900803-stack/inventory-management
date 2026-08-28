@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 type Product = { jan: string; name: string; brand: string; model: string };
 type DebugEntry = { api: string; query?: string; status?: number; count?: number; price?: number | null; message?: string };
 type RakutenItem = { itemName?: string; catchcopy?: string; itemPrice?: number | string; itemPriceMin3?: number | string; itemUrl?: string; shopName?: string; itemCode?: string; availability?: number | string };
-type RakutenProduct = { productCode?: string; productName?: string; productNo?: string; brandName?: string };
+type RakutenProduct = { productCode?: string; productName?: string; productNo?: string; brandName?: string; productUrlPC?: string; salesMinPrice?: number | string | null; usedExcludeSalesMinPrice?: number | string | null; usedExcludeSalesItemCount?: number | string | null };
 
 const ICHIBA_API = "https://openapi.rakuten.co.jp/ichibams/api/IchibaItem/Search/20260701";
 const PRODUCT_API = "https://openapi.rakuten.co.jp/ichibaproduct/api/Product/Search/20250801";
@@ -53,13 +53,12 @@ async function productSearchByJan(appId: string, accessKey: string, jan: string,
   url.searchParams.set("applicationId", appId);
   url.searchParams.set("accessKey", accessKey);
   url.searchParams.set("productCode", jan);
-  // IMPORTANT: Rakuten Product Search explicitly forbids service-specific
-  // parameters (hits/page/sort/etc.) together with productCode. Only the
-  // shared parameters may be combined with productCode.
+
   const d: DebugEntry = { api: "ProductSearch(JAN)", query: jan };
   const { response, data } = await requestJson(url, accessKey, d, "ProductSearch(JAN)");
   const products = productItemsOf(data);
   d.count = Number(data?.count ?? products.length);
+  d.price = products[0] ? (priceOf(products[0].usedExcludeSalesMinPrice) ?? priceOf(products[0].salesMinPrice)) : null;
   debug.push(d);
   return response.ok ? products[0] ?? null : null;
 }
@@ -88,50 +87,42 @@ async function ichibaSearch(appId: string, accessKey: string, keyword: string, d
   return response.ok ? items : [];
 }
 
-function searchChunks(text: string) {
-  const stop = new Set(["bandai", "spirits", "takara", "tomy", "bandaisspirits", "mg", "hg", "rg", "pg", "dx", "ver", "version", "新品", "国内正規品", "送料無料", "おもちゃ", "玩具", "セット", "scale", "スケール"]);
-  const chunks = Array.from(new Set(cleanText(text).normalize("NFKC").split(/[\s　()（）【】［］\[\],，。!！?？/／:：・+]+/).map((x) => x.trim()).filter((x) => x.length >= 2 && !stop.has(x.toLowerCase()))));
-  return chunks.sort((a, b) => b.length - a.length);
-}
-
-function buildQueries(p: Product, resolved?: RakutenProduct | null) {
-  const exactModel = cleanText(resolved?.productNo || p.model);
-  const exactName = cleanText(resolved?.productName || p.name);
-  const brand = cleanText(resolved?.brandName || p.brand);
-  const chunks = searchChunks(`${exactName} ${brand} ${exactModel}`);
+function searchTerms(product: Product, resolved: RakutenProduct | null) {
+  const values = [resolved?.productNo, product.model, resolved?.productName, product.name, resolved?.brandName ? `${resolved.brandName} ${resolved.productName ?? ""}` : `${product.brand} ${product.name}`];
   const out: string[] = [];
-  if (cleanJan(p.jan).length === 13) out.push(cleanJan(p.jan));
-  if (exactModel.length >= 2) out.push(exactModel);
-  if (chunks.length >= 2) out.push(`${chunks[0]} ${chunks[1]}`);
-  if (chunks.length >= 3) out.push(`${chunks[0]} ${chunks[2]}`);
-  if (chunks.length >= 1) out.push(chunks[0]);
-  return Array.from(new Set(out.map((q) => cleanText(q).slice(0, 128)))).slice(0, 4);
+  for (const value of values) {
+    const text = cleanText(value);
+    if (!text) continue;
+    const terms = text.split(/\s+/).filter(Boolean);
+    const q = terms.slice(0, 6).join(" ").slice(0, 128);
+    if (q.length >= 2 && !out.includes(q)) out.push(q);
+  }
+  return out.slice(0, 5);
 }
 
-function choose(items: RakutenItem[], p: Product, resolved?: RakutenProduct | null) {
-  const jan = cleanJan(p.jan);
-  const model = compact(resolved?.productNo || p.model);
-  const referenceName = resolved?.productName || p.name;
-  const chunks = searchChunks(`${referenceName} ${resolved?.brandName || p.brand} ${model}`).map(compact).filter((x) => x.length >= 3);
-  const candidates: Array<{ item: RakutenItem; price: number; score: number }> = [];
+function chooseLowestNew(items: RakutenItem[], product: Product, resolved: RakutenProduct | null) {
+  const jan = cleanJan(product.jan);
+  const model = compact(resolved?.productNo || product.model);
+  const reference = compact(resolved?.productName || product.name);
+  const candidates = items
+    .filter((item) => Number(item.availability ?? 1) === 1)
+    .filter((item) => !excluded(item))
+    .map((item) => {
+      const price = priceOf(item.itemPrice) ?? priceOf(item.itemPriceMin3);
+      if (price == null) return null;
+      const title = cleanText(`${item.itemName ?? ""} ${item.catchcopy ?? ""}`);
+      const norm = compact(title);
+      const digits = title.replace(/\D/g, "");
+      const code = compact(item.itemCode);
+      const hasJan = jan.length === 13 && (digits.includes(jan) || code.includes(jan));
+      const hasModel = model.length >= 3 && norm.includes(model);
+      const nameMatch = reference.length >= 4 && norm.includes(reference);
+      if (!hasJan && !hasModel && !nameMatch) return null;
+      const score = (hasJan ? 100000 : 0) + (hasModel ? 10000 : 0) + (nameMatch ? 1000 : 0);
+      return { item, price, score };
+    })
+    .filter(Boolean) as Array<{ item: RakutenItem; price: number; score: number }>;
 
-  for (const item of items) {
-    if (!item || excluded(item) || Number(item.availability ?? 1) !== 1) continue;
-    const price = priceOf(item.itemPrice) ?? priceOf(item.itemPriceMin3);
-    if (price == null) continue;
-    const title = cleanText(`${item.itemName ?? ""} ${item.catchcopy ?? ""}`);
-    const norm = compact(title);
-    const digits = title.replace(/\D/g, "");
-    const itemCode = compact(item.itemCode);
-    const hasJan = jan.length === 13 && (digits.includes(jan) || itemCode.includes(jan));
-    const hasModel = model.length >= 3 && norm.includes(model);
-    const overlap = chunks.filter((c) => norm.includes(c)).length;
-    if (!hasJan && !hasModel && overlap === 0) continue;
-    let score = Math.min(overlap, 8) * 100;
-    if (hasModel) score += 5000;
-    if (hasJan) score += 100000;
-    candidates.push({ item, price, score });
-  }
   candidates.sort((a, b) => b.score - a.score || a.price - b.price);
   return candidates[0] ?? null;
 }
@@ -153,35 +144,43 @@ export async function POST(request: NextRequest) {
     const debug: DebugEntry[] = [];
     const started = Date.now();
     try {
-      const janItems = await ichibaSearch(appId, accessKey, p.jan, debug);
-      let chosen = choose(janItems, p, null);
-      let source = chosen ? `IchibaItemSearch:JAN:${p.jan}` : "";
-      let resolved: RakutenProduct | null = null;
+      // PRIMARY: JAN -> Rakuten Product Search. The API's usedExcludeSalesMinPrice
+      // is specifically the lowest purchasable price excluding used items.
+      const resolved = await productSearchByJan(appId, accessKey, p.jan, debug);
+      const aggregatedPrice = resolved ? priceOf(resolved.usedExcludeSalesMinPrice) : null;
 
-      if (!chosen) {
-        resolved = await productSearchByJan(appId, accessKey, p.jan, debug);
-        const searchTerms = buildQueries(p, resolved).filter((q) => q !== p.jan);
-        const allItems: RakutenItem[] = [];
-        const seenCodes = new Set<string>();
-        for (const q of searchTerms) {
-          const items = await ichibaSearch(appId, accessKey, q, debug);
-          for (const item of items) {
-            const key = String(item.itemCode ?? `${item.itemName ?? ""}|${item.itemPrice ?? ""}`);
-            if (!seenCodes.has(key)) { seenCodes.add(key); allItems.push(item); }
-          }
-          chosen = choose(allItems, p, resolved);
-          if (chosen) { source = `IchibaItemSearch:${q}`; break; }
+      if (aggregatedPrice != null) {
+        results.push({ jan: p.jan, price: aggregatedPrice, productName: resolved?.productName ?? p.name, itemUrl: resolved?.productUrlPC ?? null, shopName: null, source: "ProductSearch:usedExcludeSalesMinPrice", matchedBy: "JAN", elapsedMs: Date.now() - started, debug, error: null });
+        continue;
+      }
+
+      // FALLBACK: search actual purchasable Ichiba listings using the product
+      // name/model returned by the JAN lookup. This is used only when the
+      // aggregate price is unavailable.
+      let chosen: { item: RakutenItem; price: number; score: number } | null = null;
+      let source = "";
+      const allItems: RakutenItem[] = [];
+      const seen = new Set<string>();
+      for (const q of searchTerms(p, resolved)) {
+        const items = await ichibaSearch(appId, accessKey, q, debug);
+        for (const item of items) {
+          const key = String(item.itemCode ?? `${item.itemName ?? ""}|${item.itemPrice ?? ""}`);
+          if (!seen.has(key)) { seen.add(key); allItems.push(item); }
         }
+        const current = chooseLowestNew(allItems, p, resolved);
+        if (current) { chosen = current; source = `IchibaItemSearch:${q}`; break; }
       }
 
       if (chosen) {
-        results.push({ jan: p.jan, price: chosen.price, productName: chosen.item.itemName ?? resolved?.productName ?? p.name, itemUrl: chosen.item.itemUrl ?? null, shopName: chosen.item.shopName ?? null, source, matchedBy: cleanJan(p.jan).length === 13 && compact(chosen.item.itemName).includes(cleanJan(p.jan)) ? "JAN" : compact(resolved?.productNo || p.model).length >= 3 && compact(chosen.item.itemName).includes(compact(resolved?.productNo || p.model)) ? "型番" : "商品名", elapsedMs: Date.now() - started, debug, error: null });
+        results.push({ jan: p.jan, price: chosen.price, productName: chosen.item.itemName ?? resolved?.productName ?? p.name, itemUrl: chosen.item.itemUrl ?? null, shopName: chosen.item.shopName ?? null, source, matchedBy: "商品名/型番", elapsedMs: Date.now() - started, debug, error: null });
       } else {
-        results.push({ jan: p.jan, price: null, productName: resolved?.productName ?? p.name, elapsedMs: Date.now() - started, debug, error: debug.some((d) => d.status === 429) ? "楽天APIのリクエスト制限（429）です。少し時間を置いて再試行してください。" : debug.some((d) => d.status && d.status >= 400) ? `楽天APIエラー：${debug.filter((d) => d.message).map((d) => `${d.status} ${d.message}`).join(" / ")}` : "楽天市場から新品として採用できる商品を取得できませんでした。" });
+        const apiErrors = debug.filter((d) => d.message).map((d) => `${d.api} ${d.status ?? "?"}: ${d.message}`).join(" / ");
+        results.push({ jan: p.jan, price: null, productName: resolved?.productName ?? p.name, elapsedMs: Date.now() - started, debug, error: apiErrors || "楽天市場から新品として採用できる価格を取得できませんでした。" });
       }
     } catch (error: any) {
       results.push({ jan: p.jan, price: null, productName: p.name, elapsedMs: Date.now() - started, debug, error: error?.name === "AbortError" ? "楽天APIが10秒以内に応答しませんでした。" : error?.message || "楽天APIへの接続に失敗しました。" });
     }
   }
+
   return NextResponse.json({ results });
 }
