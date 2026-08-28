@@ -14,8 +14,6 @@ const normalize = (v: unknown) => cleanText(v).normalize("NFKC").toLowerCase().r
 const compact = (v: unknown) => normalize(v).replace(/\s+/g, "");
 const priceOf = (v: unknown) => { if (v == null || v === "") return null; const n = Number(String(v).replace(/,/g, "")); return Number.isFinite(n) && n > 0 ? n : null; };
 
-// Only reject listings that are explicitly sold as used/damaged. Do not inspect
-// itemCaption because legitimate new products often mention parts/replacements.
 const EXCLUDED = ["中古", "中古品", "ユーズド", "used", "ジャンク", "ジャンク品", "開封済み", "開封済", "開封品", "箱なし", "箱無", "欠品", "訳あり", "アウトレット", "展示品", "リファービッシュ", "再生品", "難あり", "現状品", "動作未確認"];
 
 function itemsOf(data: any): RakutenItem[] {
@@ -51,7 +49,7 @@ async function requestJson(url: URL, accessKey: string, debug: DebugEntry, api: 
 async function productSearchByJan(appId: string, accessKey: string, jan: string, debug: DebugEntry[]) {
   const url = new URL(PRODUCT_API);
   url.searchParams.set("format", "json");
-  url.searchParams.set("formatVersion", "1");
+  url.searchParams.set("formatVersion", "2");
   url.searchParams.set("applicationId", appId);
   url.searchParams.set("accessKey", accessKey);
   url.searchParams.set("productCode", jan);
@@ -100,6 +98,9 @@ function buildQueries(p: Product, resolved?: RakutenProduct | null) {
   const brand = cleanText(resolved?.brandName || p.brand);
   const chunks = searchChunks(`${exactName} ${brand} ${exactModel}`);
   const out: string[] = [];
+  // JAN is the strongest identifier. Search it first because Rakuten item titles
+  // frequently contain the JAN even when the registered product name differs.
+  if (cleanJan(p.jan).length === 13) out.push(cleanJan(p.jan));
   if (exactModel.length >= 2) out.push(exactModel);
   if (chunks.length >= 2) out.push(`${chunks[0]} ${chunks[1]}`);
   if (chunks.length >= 3) out.push(`${chunks[0]} ${chunks[2]}`);
@@ -116,7 +117,7 @@ function choose(items: RakutenItem[], p: Product, resolved?: RakutenProduct | nu
 
   for (const item of items) {
     if (!item || excluded(item) || Number(item.availability ?? 1) !== 1) continue;
-    const price = priceOf(item.itemPriceMin3) ?? priceOf(item.itemPrice);
+    const price = priceOf(item.itemPrice) ?? priceOf(item.itemPriceMin3);
     if (price == null) continue;
     const title = cleanText(`${item.itemName ?? ""} ${item.catchcopy ?? ""}`);
     const norm = compact(title);
@@ -152,27 +153,33 @@ export async function POST(request: NextRequest) {
     const debug: DebugEntry[] = [];
     const started = Date.now();
     try {
-      // JAN is a Product Search parameter, not an Ichiba Item Search keyword.
-      // Resolve the official product name/model first, then search selling items.
-      const resolved = await productSearchByJan(appId, accessKey, p.jan, debug);
-      const searchTerms = buildQueries(p, resolved);
-      const allItems: RakutenItem[] = [];
-      const seenCodes = new Set<string>();
-      let chosen: { item: RakutenItem; price: number; score: number } | null = null;
-      let source = "";
+      // First attempt: direct JAN search in Ichiba Item Search. This is both
+      // the most accurate and the cheapest path when the JAN is present in the
+      // Rakuten listing title (which is common for manufacturer products).
+      const janItems = await ichibaSearch(appId, accessKey, p.jan, debug);
+      let chosen = choose(janItems, p, null);
+      let source = chosen ? `IchibaItemSearch:JAN:${p.jan}` : "";
+      let resolved: RakutenProduct | null = null;
 
-      for (const q of searchTerms) {
-        const items = await ichibaSearch(appId, accessKey, q, debug);
-        for (const item of items) {
-          const key = String(item.itemCode ?? `${item.itemName ?? ""}|${item.itemPrice ?? ""}`);
-          if (!seenCodes.has(key)) { seenCodes.add(key); allItems.push(item); }
+      // Fallback only when the direct JAN search did not yield an adoptable item.
+      if (!chosen) {
+        resolved = await productSearchByJan(appId, accessKey, p.jan, debug);
+        const searchTerms = buildQueries(p, resolved).filter((q) => q !== p.jan);
+        const allItems: RakutenItem[] = [];
+        const seenCodes = new Set<string>();
+        for (const q of searchTerms) {
+          const items = await ichibaSearch(appId, accessKey, q, debug);
+          for (const item of items) {
+            const key = String(item.itemCode ?? `${item.itemName ?? ""}|${item.itemPrice ?? ""}`);
+            if (!seenCodes.has(key)) { seenCodes.add(key); allItems.push(item); }
+          }
+          chosen = choose(allItems, p, resolved);
+          if (chosen) { source = `IchibaItemSearch:${q}`; break; }
         }
-        chosen = choose(allItems, p, resolved);
-        if (chosen) { source = `IchibaItemSearch:${q}`; break; }
       }
 
       if (chosen) {
-        results.push({ jan: p.jan, price: chosen.price, productName: chosen.item.itemName ?? resolved?.productName ?? p.name, itemUrl: chosen.item.itemUrl ?? null, shopName: chosen.item.shopName ?? null, source, matchedBy: compact(resolved?.productNo || p.model).length >= 3 && compact(chosen.item.itemName).includes(compact(resolved?.productNo || p.model)) ? "型番" : "商品名", elapsedMs: Date.now() - started, debug, error: null });
+        results.push({ jan: p.jan, price: chosen.price, productName: chosen.item.itemName ?? resolved?.productName ?? p.name, itemUrl: chosen.item.itemUrl ?? null, shopName: chosen.item.shopName ?? null, source, matchedBy: cleanJan(p.jan).length === 13 && compact(chosen.item.itemName).includes(cleanJan(p.jan)) ? "JAN" : compact(resolved?.productNo || p.model).length >= 3 && compact(chosen.item.itemName).includes(compact(resolved?.productNo || p.model)) ? "型番" : "商品名", elapsedMs: Date.now() - started, debug, error: null });
       } else {
         results.push({ jan: p.jan, price: null, productName: resolved?.productName ?? p.name, elapsedMs: Date.now() - started, debug, error: debug.some((d) => d.status === 429) ? "楽天APIのリクエスト制限（429）です。少し時間を置いて再試行してください。" : debug.some((d) => d.status && d.status >= 400) ? `楽天APIエラー：${debug.filter((d) => d.message).map((d) => `${d.status} ${d.message}`).join(" / ")}` : "楽天市場から新品として採用できる商品を取得できませんでした。" });
       }
