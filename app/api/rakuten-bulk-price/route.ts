@@ -104,8 +104,9 @@ async function lookupProductByJan(appId: string, accessKey: string, jan: string,
   url.searchParams.set("formatVersion", "2");
   url.searchParams.set("applicationId", appId);
   url.searchParams.set("accessKey", accessKey);
+  // IMPORTANT: productCode(JAN) cannot be combined with service-specific parameters.
+  // Do NOT add hits/page/sort/etc. here. Rakuten documents productCode as mutually exclusive with other service-specific parameters.
   url.searchParams.set("productCode", jan);
-  url.searchParams.set("hits", "1");
   debug.api = "ProductSearch(JAN)";
   debug.query = jan;
 
