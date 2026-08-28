@@ -131,10 +131,13 @@ function queryCandidates(p: Product, resolved: any) {
   return Array.from(new Set(out));
 }
 
-function choose(items: Item[], reference: string) {
-  const usable = items
-    .map((item) => ({ item, p: price(item.itemPriceMin3) ?? price(item.itemPrice) }))
-    .filter((x) => x.p != null && !isBad(x.item));
+function choose(items: Item[], reference: string): { item: Item; p: number } | null {
+  const usable: Array<{ item: Item; p: number }> = [];
+  for (const item of items) {
+    if (isBad(item)) continue;
+    const p = price(item.itemPriceMin3) ?? price(item.itemPrice);
+    if (p != null) usable.push({ item, p });
+  }
   if (!usable.length) return null;
 
   const ref = norm(reference);
@@ -148,8 +151,8 @@ function choose(items: Item[], reference: string) {
 
   const exact = scored.filter((x) => x.score >= 100);
   const pool = exact.length ? exact : scored.filter((x) => x.score >= Math.min(10, refTokens.length * 5));
-  (pool.length ? pool : scored).sort((a, b) => (a.p as number) - (b.p as number));
-  return (pool.length ? pool : scored)[0] ?? null;
+  const sorted = [...(pool.length ? pool : scored)].sort((a, b) => a.p - b.p);
+  return sorted[0] ?? null;
 }
 
 export async function POST(request: NextRequest) {
@@ -181,7 +184,6 @@ export async function POST(request: NextRequest) {
     const searchDebug: Debug[] = [];
 
     try {
-      // Product Searchは「補助情報」。失敗してもここで終了しないのが重要。
       const lookup = await lookupProductByJan(appId, accessKey, p.jan, productDebug);
       const resolved = lookup.product;
       const queries = queryCandidates(p, resolved);
@@ -190,7 +192,6 @@ export async function POST(request: NextRequest) {
       let candidateCount = 0;
       let rateLimited = false;
 
-      // JAN検索でProduct Searchが失敗しても、登録済みの商品名/型番から必ず楽天市場検索へ進む。
       for (const query of queries.slice(0, 4)) {
         const d: Debug = { api: "IchibaItemSearch", query };
         const search = await searchItems(appId, accessKey, query, d);
