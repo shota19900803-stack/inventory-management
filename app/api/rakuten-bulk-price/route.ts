@@ -58,6 +58,7 @@ async function productSearchByJan(appId: string, accessKey: string, jan: string,
   const { response, data } = await requestJson(url, accessKey, d, "ProductSearch(JAN)");
   const products = productItemsOf(data);
   d.count = Number(data?.count ?? products.length);
+  // Since 2026-03-25 Rakuten may return price aggregate fields as null.
   d.price = products[0] ? (priceOf(products[0].usedExcludeSalesMinPrice) ?? priceOf(products[0].salesMinPrice)) : null;
   debug.push(d);
   return response.ok ? products[0] ?? null : null;
@@ -87,44 +88,77 @@ async function ichibaSearch(appId: string, accessKey: string, keyword: string, d
   return response.ok ? items : [];
 }
 
-function searchTerms(product: Product, resolved: RakutenProduct | null) {
-  const values = [resolved?.productNo, product.model, resolved?.productName, product.name, resolved?.brandName ? `${resolved.brandName} ${resolved.productName ?? ""}` : `${product.brand} ${product.name}`];
-  const out: string[] = [];
-  for (const value of values) {
-    const text = cleanText(value);
-    if (!text) continue;
-    const terms = text.split(/\s+/).filter(Boolean);
-    const q = terms.slice(0, 6).join(" ").slice(0, 128);
-    if (q.length >= 2 && !out.includes(q)) out.push(q);
-  }
-  return out.slice(0, 5);
+function significantTokens(value: string) {
+  return normalize(value).split(" ").filter((t) => t.length >= 2 && !/^\d+$/.test(t)).slice(0, 8);
 }
 
-function chooseLowestNew(items: RakutenItem[], product: Product, resolved: RakutenProduct | null) {
-  const jan = cleanJan(product.jan);
-  const model = compact(resolved?.productNo || product.model);
-  const reference = compact(resolved?.productName || product.name);
-  const candidates = items
+function searchTerms(product: Product, resolved: RakutenProduct | null) {
+  const name = cleanText(resolved?.productName || product.name);
+  const model = cleanText(resolved?.productNo || product.model);
+  const brand = cleanText(resolved?.brandName || product.brand);
+  const out: string[] = [];
+
+  // Keep the strongest identifiers first. The JAN is also tried directly
+  // because some Rakuten item titles include the JAN code.
+  if (product.jan) out.push(product.jan);
+  if (model) out.push(model);
+  if (name) out.push(name);
+  const tokens = significantTokens(name);
+  if (tokens.length >= 2) out.push(tokens.slice(0, 4).join(" "));
+  if (brand && name) out.push(`${brand} ${tokens.slice(0, 4).join(" ")}`.trim());
+
+  return Array.from(new Set(out.map(cleanText).filter((q) => q.length >= 2))).slice(0, 5);
+}
+
+function candidateItems(items: RakutenItem[]) {
+  return items
     .filter((item) => Number(item.availability ?? 1) === 1)
     .filter((item) => !excluded(item))
     .map((item) => {
       const price = priceOf(item.itemPrice) ?? priceOf(item.itemPriceMin3);
-      if (price == null) return null;
-      const title = cleanText(`${item.itemName ?? ""} ${item.catchcopy ?? ""}`);
-      const norm = compact(title);
-      const digits = title.replace(/\D/g, "");
-      const code = compact(item.itemCode);
-      const hasJan = jan.length === 13 && (digits.includes(jan) || code.includes(jan));
-      const hasModel = model.length >= 3 && norm.includes(model);
-      const nameMatch = reference.length >= 4 && norm.includes(reference);
-      if (!hasJan && !hasModel && !nameMatch) return null;
-      const score = (hasJan ? 100000 : 0) + (hasModel ? 10000 : 0) + (nameMatch ? 1000 : 0);
-      return { item, price, score };
+      return price == null ? null : { item, price };
     })
-    .filter(Boolean) as Array<{ item: RakutenItem; price: number; score: number }>;
+    .filter(Boolean) as Array<{ item: RakutenItem; price: number }>;
+}
 
-  candidates.sort((a, b) => b.score - a.score || a.price - b.price);
-  return candidates[0] ?? null;
+function chooseLowestNew(items: RakutenItem[], product: Product, resolved: RakutenProduct | null, query: string) {
+  const candidates = candidateItems(items);
+  if (!candidates.length) return null;
+
+  const jan = cleanJan(product.jan);
+  const model = compact(resolved?.productNo || product.model);
+  const reference = compact(resolved?.productName || product.name);
+  const q = compact(query);
+  const qTokens = significantTokens(query);
+
+  const scored = candidates.map(({ item, price }) => {
+    const title = cleanText(`${item.itemName ?? ""} ${item.catchcopy ?? ""}`);
+    const norm = compact(title);
+    const digits = title.replace(/\D/g, "");
+    const code = compact(item.itemCode);
+    const hasJan = jan.length === 13 && (digits.includes(jan) || code.includes(jan));
+    const hasModel = model.length >= 3 && norm.includes(model);
+    const hasFullName = reference.length >= 4 && norm.includes(reference);
+    const tokenHits = qTokens.filter((t) => t.length >= 2 && norm.includes(compact(t))).length;
+    const queryIsJan = q === compact(jan);
+    const score = (hasJan ? 100000 : 0) + (hasModel ? 10000 : 0) + (hasFullName ? 5000 : 0) + tokenHits * 100;
+    return { item, price, score, hasJan, hasModel, hasFullName, tokenHits, queryIsJan };
+  });
+
+  // A direct JAN search is only accepted when the listing actually exposes
+  // that JAN. For product-name/model searches, the query itself is already an
+  // AND search in Rakuten, so use the cheapest eligible result rather than
+  // rejecting valid listings because their title wording differs slightly.
+  if (q === compact(jan)) {
+    const janMatches = scored.filter((x) => x.hasJan);
+    janMatches.sort((a, b) => a.price - b.price);
+    return janMatches[0] ?? null;
+  }
+
+  const confident = scored.filter((x) => x.hasJan || x.hasModel || x.hasFullName || x.tokenHits >= Math.min(3, Math.max(1, qTokens.length)));
+  const pool = confident.length ? confident : scored;
+  pool.sort((a, b) => b.score - a.score || a.price - b.price);
+  return pool[0] ?? null;
 }
 
 export async function POST(request: NextRequest) {
@@ -144,9 +178,11 @@ export async function POST(request: NextRequest) {
     const debug: DebugEntry[] = [];
     const started = Date.now();
     try {
-      // PRIMARY: JAN -> Rakuten Product Search. The API's usedExcludeSalesMinPrice
-      // is specifically the lowest purchasable price excluding used items.
       const resolved = await productSearchByJan(appId, accessKey, p.jan, debug);
+      // Rakuten documents these aggregate price fields as nullable and has
+      // announced that several of them may be returned as null. Do not make
+      // the entire feature depend on them; actual Ichiba listings are the
+      // authoritative fallback for the current implementation.
       const aggregatedPrice = resolved ? priceOf(resolved.usedExcludeSalesMinPrice) : null;
 
       if (aggregatedPrice != null) {
@@ -154,25 +190,23 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      // FALLBACK: search actual purchasable Ichiba listings using the product
-      // name/model returned by the JAN lookup. This is used only when the
-      // aggregate price is unavailable.
-      let chosen: { item: RakutenItem; price: number; score: number } | null = null;
+      let chosen: { item: RakutenItem; price: number } | null = null;
       let source = "";
       const allItems: RakutenItem[] = [];
       const seen = new Set<string>();
+
       for (const q of searchTerms(p, resolved)) {
         const items = await ichibaSearch(appId, accessKey, q, debug);
         for (const item of items) {
           const key = String(item.itemCode ?? `${item.itemName ?? ""}|${item.itemPrice ?? ""}`);
           if (!seen.has(key)) { seen.add(key); allItems.push(item); }
         }
-        const current = chooseLowestNew(allItems, p, resolved);
+        const current = chooseLowestNew(items, p, resolved, q);
         if (current) { chosen = current; source = `IchibaItemSearch:${q}`; break; }
       }
 
       if (chosen) {
-        results.push({ jan: p.jan, price: chosen.price, productName: chosen.item.itemName ?? resolved?.productName ?? p.name, itemUrl: chosen.item.itemUrl ?? null, shopName: chosen.item.shopName ?? null, source, matchedBy: "商品名/型番", elapsedMs: Date.now() - started, debug, error: null });
+        results.push({ jan: p.jan, price: chosen.price, productName: chosen.item.itemName ?? resolved?.productName ?? p.name, itemUrl: chosen.item.itemUrl ?? null, shopName: chosen.item.shopName ?? null, source, matchedBy: "楽天市場検索", elapsedMs: Date.now() - started, debug, error: null });
       } else {
         const apiErrors = debug.filter((d) => d.message).map((d) => `${d.api} ${d.status ?? "?"}: ${d.message}`).join(" / ");
         results.push({ jan: p.jan, price: null, productName: resolved?.productName ?? p.name, elapsedMs: Date.now() - started, debug, error: apiErrors || "楽天市場から新品として採用できる価格を取得できませんでした。" });
