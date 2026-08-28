@@ -68,15 +68,17 @@ function buildQueries(p: Product) {
 
 function chooseIchibaItem(items: any[], p: Product, query: string) {
   const jan = cleanJan(p.jan);
-  const model = normalize(p.model || extractModels(p.name)[0] || "");
+  const modelRaw = p.model || extractModels(p.name)[0] || "";
+  const model = normalize(modelRaw);
   const brand = normalize(p.brand);
-  const core = normalize(coreName(p.name, model, brand));
+  const core = normalize(coreName(p.name, modelRaw, p.brand));
   const q = normalize(query);
 
   const candidates = items.map((item: any) => {
     if (!item || isExcluded(item)) return null;
     const price = priceOf(item.itemPriceMin3) ?? priceOf(item.itemPrice);
     if (price == null) return null;
+
     const searchable = cleanText(`${item.itemName ?? ""} ${item.catchcopy ?? ""} ${item.itemCaption ?? ""} ${item.itemCode ?? ""}`);
     const digits = searchable.replace(/\D/g, "");
     const name = normalize(item.itemName);
@@ -85,18 +87,26 @@ function chooseIchibaItem(items: any[], p: Product, query: string) {
     const hasModel = !!model && (name.includes(model) || code.includes(model));
     const hasBrand = !!brand && name.includes(brand);
     const hasCore = !!core && name.includes(core);
+
     let score = 0;
-    if (hasJan) score += 10000;
-    if (hasModel) score += 5000;
-    if (hasBrand) score += 1000;
+    if (hasJan) score += 100000;
+    if (hasModel) score += 10000;
     if (hasCore) score += 3000;
-    if (q && name.includes(q)) score += 1500;
+    if (hasBrand) score += 1000;
+    if (q && (name.includes(q) || code.includes(q))) score += 1500;
+
     return { item, price, score, hasJan, hasModel, hasCore };
   }).filter(Boolean) as Array<{ item: any; price: number; score: number; hasJan: boolean; hasModel: boolean; hasCore: boolean }>;
 
+  if (!candidates.length) return null;
+
   candidates.sort((a, b) => b.score - a.score || a.price - b.price);
-  const strong = candidates.filter((x) => x.hasJan || x.hasModel || x.hasCore);
-  return strong[0] ?? null;
+
+  // The Rakuten keyword search already constrains the result set.
+  // Do not reject all candidates merely because Rakuten's item title omits
+  // the JAN/model text. This was the reason valid results were becoming
+  // "未取得" even when the API returned priced items.
+  return candidates[0] ?? null;
 }
 
 function apiError(data: any, status: number) { return data?.error_description || data?.error || `HTTP ${status}`; }
@@ -110,7 +120,7 @@ async function ichibaSearch(appId: string, accessKey: string, keyword: string) {
   url.searchParams.set("hits", "30");
   url.searchParams.set("sort", "+itemPrice");
   url.searchParams.set("availability", "1");
-  url.searchParams.set("field", "0");
+  url.searchParams.set("field", "1");
   url.searchParams.set("purchaseType", "0");
   url.searchParams.set("elements", "itemName,catchcopy,itemPrice,itemPriceMin3,itemCaption,itemUrl,availability,shopName,shopUrl,itemCode");
   return fetchJson(url, accessKey);
