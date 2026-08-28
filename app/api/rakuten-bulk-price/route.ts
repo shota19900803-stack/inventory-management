@@ -53,7 +53,9 @@ async function productSearchByJan(appId: string, accessKey: string, jan: string,
   url.searchParams.set("applicationId", appId);
   url.searchParams.set("accessKey", accessKey);
   url.searchParams.set("productCode", jan);
-  url.searchParams.set("hits", "1");
+  // IMPORTANT: Rakuten Product Search explicitly forbids service-specific
+  // parameters (hits/page/sort/etc.) together with productCode. Only the
+  // shared parameters may be combined with productCode.
   const d: DebugEntry = { api: "ProductSearch(JAN)", query: jan };
   const { response, data } = await requestJson(url, accessKey, d, "ProductSearch(JAN)");
   const products = productItemsOf(data);
@@ -98,8 +100,6 @@ function buildQueries(p: Product, resolved?: RakutenProduct | null) {
   const brand = cleanText(resolved?.brandName || p.brand);
   const chunks = searchChunks(`${exactName} ${brand} ${exactModel}`);
   const out: string[] = [];
-  // JAN is the strongest identifier. Search it first because Rakuten item titles
-  // frequently contain the JAN even when the registered product name differs.
   if (cleanJan(p.jan).length === 13) out.push(cleanJan(p.jan));
   if (exactModel.length >= 2) out.push(exactModel);
   if (chunks.length >= 2) out.push(`${chunks[0]} ${chunks[1]}`);
@@ -153,15 +153,11 @@ export async function POST(request: NextRequest) {
     const debug: DebugEntry[] = [];
     const started = Date.now();
     try {
-      // First attempt: direct JAN search in Ichiba Item Search. This is both
-      // the most accurate and the cheapest path when the JAN is present in the
-      // Rakuten listing title (which is common for manufacturer products).
       const janItems = await ichibaSearch(appId, accessKey, p.jan, debug);
       let chosen = choose(janItems, p, null);
       let source = chosen ? `IchibaItemSearch:JAN:${p.jan}` : "";
       let resolved: RakutenProduct | null = null;
 
-      // Fallback only when the direct JAN search did not yield an adoptable item.
       if (!chosen) {
         resolved = await productSearchByJan(appId, accessKey, p.jan, debug);
         const searchTerms = buildQueries(p, resolved).filter((q) => q !== p.jan);
