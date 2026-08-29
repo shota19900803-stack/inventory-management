@@ -52,6 +52,21 @@ export default function Home() {
       return false;
     };
 
+    const hidePurchaseMarketCheck = () => {
+      if (stopped) return;
+      const main = document.querySelector("main");
+      if (!main) return;
+
+      const buttons = Array.from(main.querySelectorAll("button"));
+      buttons.forEach((button) => {
+        const text = (button.textContent || "").replace(/\s/g, "").trim();
+        if (text !== "相場チェック") return;
+        if (button.getAttribute("data-market-check-hidden") === "true") return;
+        button.style.display = "none";
+        button.setAttribute("data-market-check-hidden", "true");
+      });
+    };
+
     const bindProductHistoryButtons = () => {
       const main = document.querySelector("main");
       if (!main) return;
@@ -126,6 +141,7 @@ export default function Home() {
 
     const run = () => {
       hideLowStockCard();
+      hidePurchaseMarketCheck();
       bindProductHistoryButtons();
     };
 
