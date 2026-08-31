@@ -29,8 +29,9 @@ if (!unitCostPattern.test(saleBlock)) {
 const replacement = `  const quantity = Number(\n    saleForm.quantity || 0\n  );\n\n  const unitCost = getFifoUnitCost(\n    saleForm.product_id,\n    quantity,\n    saleForm.sale_date\n  );`;
 let patchedSaleBlock = saleBlock.replace(unitCostPattern, replacement);
 
-// Remove the later duplicate quantity declaration created by the original form.
-patchedSaleBlock = patchedSaleBlock.replace(/\n  const quantity = Number\(\n    saleForm\.quantity \|\| 0\n  \);\n\n  if \(/, "\n  if (");
+// The original saveSale block already declares quantity immediately after unitCost.
+// Remove that original declaration because the replacement above owns the quantity value.
+patchedSaleBlock = patchedSaleBlock.replace(/(  const unitCost = getFifoUnitCost\([\\s\\S]*?\n  \);)\n\n  const quantity = Number\(\n    saleForm\.quantity \|\| 0\n  \);/, "$1");
 
 text = text.slice(0, start) + patchedSaleBlock + text.slice(blockEnd);
 fs.writeFileSync(file, text, "utf8");
