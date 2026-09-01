@@ -1,0 +1,1 @@
+The performance patch is intentionally applied as the final prebuild step so it runs after the existing compatibility/UI repair scripts. This keeps the current source generation flow intact while removing the expensive post-registration full reload.
