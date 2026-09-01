@@ -26,32 +26,46 @@ if (!source.includes(monthSalesAnchor)) {
 source = source.replace(monthSalesAnchor, recentSalesMemo);
 
 const headingAnchor = `              <h2>最近の売上</h2>`;
-const headingReplacement = `              <div\n                style={{\n                  display: "flex",\n                  justifyContent: "space-between",\n                  alignItems: "center",\n                  gap: 12,\n                  flexWrap: "wrap",\n                  marginBottom: 15,\n                }}\n              >\n                <h2 style={{ margin: 0 }}>最近の売上</h2>\n\n                <div\n                  style={{\n                    display: "flex",\n                    gap: 10,\n                    flexWrap: "wrap",\n                    alignItems: "center",\n                  }}\n                >\n                  <label style={{ fontWeight: 700 }}>\n                    月\n                    <select\n                      value={recentSalesMonth}\n                      onChange={(e) => setRecentSalesMonth(e.target.value)}\n                      style={{ ...inputStyle, marginLeft: 6, width: 150 }}\n                    >\n                      {months.map((month) => (\n                        <option value={month} key={month}>\n                          {month}\n                        </option>\n                      ))}\n                    </select>\n                  </label>\n\n                  <input\n                    style={{ ...inputStyle, width: 220 }}\n                    value={recentSalesOrderSearch}\n                    onChange={(e) => setRecentSalesOrderSearch(e.target.value)}\n                    placeholder="注文番号で検索"\n                  />\n                </div>\n              </div>\n\n              <div\n                style={{\n                  marginBottom: 12,\n                  color: "#6b7280",\n                  fontSize: 13,\n                }}\n              >\n                {recentSalesOrderSearch.trim()\n                  ? \`${recentSalesMonth}・注文番号「${recentSalesOrderSearch.trim()}」の検索結果：${filteredRecentSales.length}件\`\n                  : \`${recentSalesMonth}の売上：${filteredRecentSales.length}件\`}\n              </div>`;
+const headingReplacement = `              <div\n                style={{\n                  display: "flex",\n                  justifyContent: "space-between",\n                  alignItems: "center",\n                  gap: 12,\n                  flexWrap: "wrap",\n                  marginBottom: 15,\n                }}\n              >\n                <h2 style={{ margin: 0 }}>最近の売上</h2>\n\n                <div\n                  style={{\n                    display: "flex",\n                    gap: 10,\n                    flexWrap: "wrap",\n                    alignItems: "center",\n                  }}\n                >\n                  <label style={{ fontWeight: 700 }}>\n                    月\n                    <select\n                      value={recentSalesMonth}\n                      onChange={(e) => setRecentSalesMonth(e.target.value)}\n                      style={{ ...inputStyle, marginLeft: 6, width: 150 }}\n                    >\n                      {months.map((month) => (\n                        <option value={month} key={month}>\n                          {month}\n                        </option>\n                      ))}\n                    </select>\n                  </label>\n\n                  <input\n                    style={{ ...inputStyle, width: 220 }}\n                    value={recentSalesOrderSearch}\n                    onChange={(e) => setRecentSalesOrderSearch(e.target.value)}\n                    placeholder="注文番号で検索"\n                  />\n                </div>\n              </div>\n\n              <div\n                style={{\n                  marginBottom: 12,\n                  color: "#6b7280",\n                  fontSize: 13,\n                }}\n              >\n                {recentSalesOrderSearch.trim()\n                  ? recentSalesMonth + "・注文番号「" + recentSalesOrderSearch.trim() + "」の検索結果：" + filteredRecentSales.length + "件"\n                  : recentSalesMonth + "の売上：" + filteredRecentSales.length + "件"}\n              </div>`;
 
 if (!source.includes(headingAnchor)) {
   throw new Error("最近の売上 heading not found.");
 }
 source = source.replace(headingAnchor, headingReplacement);
 
-const mapPattern = /\{sales\s*\.slice\(0, 100\)\s*\.map\(\(sale\) => \(/;
-if (!mapPattern.test(source)) {
-  throw new Error("Recent sales map pattern not found.");
+const recentHeadingIndex = source.indexOf("<h2 style={{ margin: 0 }}>最近の売上</h2>");
+const recentSectionStart = source.lastIndexOf("<section", recentHeadingIndex);
+const recentSectionEnd = source.indexOf("</section>", recentHeadingIndex);
+if (recentSectionStart < 0 || recentSectionEnd < 0) {
+  throw new Error("Recent sales section boundaries not found.");
 }
-source = source.replace(mapPattern, "{filteredRecentSales.map((sale) => (");
 
-const salesChannelCell = `                          <td style={{ padding: 10 }}>\n                            {sale.sales_channel ||\n                              "—"}\n                          </td>`;
-const orderCell = `${salesChannelCell}\n\n                          <td style={{ padding: 10, whiteSpace: "nowrap" }}>\n                            {sale.order_number || "—"}\n                          </td>`;
-if (!source.includes(salesChannelCell)) {
-  throw new Error("Recent sales channel cell not found.");
+let recentSection = source.slice(recentSectionStart, recentSectionEnd);
+recentSection = recentSection.replace(
+  /\{sales\s*\.slice\(0, 100\)\s*\.map\(\(sale\) => \(/,
+  "{filteredRecentSales.map((sale) => ("
+);
+
+const recentSalesChannelHeader = `                      <th style={{ padding: 10 }}>\n                        販売先\n                      </th>`;
+if (recentSection.includes(recentSalesChannelHeader)) {
+  recentSection = recentSection.replace(
+    recentSalesChannelHeader,
+    `${recentSalesChannelHeader}\n                      <th style={{ padding: 10 }}>\n                        注文番号\n                      </th>`
+  );
 }
-source = source.replace(salesChannelCell, orderCell);
 
-const salesChannelHeader = `                      <th style={{ padding: 10 }}>\n                        販売先\n                      </th>`;
-const orderHeader = `${salesChannelHeader}\n                      <th style={{ padding: 10 }}>\n                        注文番号\n                      </th>`;
-if (!source.includes(salesChannelHeader)) {
-  throw new Error("Recent sales channel header not found.");
+const recentSalesChannelCell = `                          <td style={{ padding: 10 }}>\n                            {sale.sales_channel ||\n                              "—"}\n                          </td>`;
+if (recentSection.includes(recentSalesChannelCell)) {
+  recentSection = recentSection.replace(
+    recentSalesChannelCell,
+    `${recentSalesChannelCell}\n\n                          <td style={{ padding: 10, whiteSpace: "nowrap" }}>\n                            {sale.order_number || "—"}\n                          </td>`
+  );
 }
-source = source.replace(salesChannelHeader, orderHeader);
 
+if (!recentSection.includes("filteredRecentSales.map")) {
+  throw new Error("Recent sales map replacement failed.");
+}
+
+source = source.slice(0, recentSectionStart) + recentSection + source.slice(recentSectionEnd);
 fs.writeFileSync(file, source, "utf8");
 console.log("Applied recent sales order-number search and month filter.");
