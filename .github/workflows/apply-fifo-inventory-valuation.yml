@@ -20,7 +20,7 @@ jobs:
 
       - name: Verify production build
         run: |
-          npm ci
+          npm install
           npm run build
 
       - name: Commit fix and remove workflow
