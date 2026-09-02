@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { BrowserMultiFormatReader } from "@zxing/browser";
+import type { BrowserMultiFormatReader } from "@zxing/browser";
 import { supabaseBrowser } from "../lib/supabase";
+import ProductPriceResearchPanel from "./ProductPriceResearchPanel";
 
 type Product = {
   id: string;
@@ -43,6 +44,7 @@ type Sale = {
   total_sales: number;
   total_cost: number;
   gross_profit: number;
+  shipping_cost?: number | null;
   notes?: string | null;
   is_cancelled: boolean;
   created_at?: string;
@@ -85,6 +87,7 @@ const initialSaleForm = {
   unit_price: "",
   unit_cost: "",
   quantity: "1",
+  shipping_cost: "",
   notes: "",
 };
 
@@ -100,7 +103,23 @@ function monthOf(date: string) {
 export default function Dashboard() {
   const supabase = supabaseBrowser;
 
-  const [tab, setTab] = useState<Tab>("dashboard");
+  const [tab, setTabState] = useState<Tab>("dashboard");
+
+  const setTab = (next: Tab) => {
+    setTabState(next);
+    try {
+      sessionStorage.setItem("inventory-active-tab", next);
+    } catch {}
+  };
+
+  useEffect(() => {
+    try {
+      const saved = sessionStorage.getItem("inventory-active-tab");
+      if (saved === "dashboard" || saved === "products" || saved === "purchases" || saved === "sales") {
+        setTabState(saved as Tab);
+      }
+    } catch {}
+  }, []);
 
   const [products, setProducts] = useState<Product[]>([]);
   const [purchases, setPurchases] = useState<Purchase[]>([]);
@@ -129,6 +148,52 @@ export default function Dashboard() {
     )
   );
 }, [products, productSearch]);
+  const [purchaseProductSearch, setPurchaseProductSearch] = useState("");
+
+  const filteredPurchaseProducts = useMemo(() => {
+    const keyword = purchaseProductSearch.trim().toLowerCase();
+
+    if (!keyword) {
+      return products;
+    }
+
+    return products.filter((product) =>
+      [
+        product.name,
+        product.jan_code,
+        product.sku,
+        product.model_number,
+        product.brand,
+        product.category,
+      ].some((value) =>
+        String(value ?? "").toLowerCase().includes(keyword)
+      )
+    );
+  }, [products, purchaseProductSearch]);
+
+  const [saleProductSearch, setSaleProductSearch] = useState("");
+
+  const filteredSaleProducts = useMemo(() => {
+    const keyword = saleProductSearch.trim().toLowerCase();
+
+    if (!keyword) {
+      return products;
+    }
+
+    return products.filter((product) =>
+      [
+        product.name,
+        product.jan_code,
+        product.sku,
+        product.model_number,
+        product.brand,
+        product.category,
+      ].some((value) =>
+        String(value ?? "").toLowerCase().includes(keyword)
+      )
+    );
+  }, [products, saleProductSearch]);
+
   const [historyProductId, setHistoryProductId] = useState("");
 
   const [editingProductId, setEditingProductId] =
@@ -150,8 +215,12 @@ export default function Dashboard() {
   const [selectedMonth, setSelectedMonth] =
   useState(today.slice(0, 7));
 
+  // 最近の売上用：注文番号検索と表示月
+  const [recentSalesOrderSearch, setRecentSalesOrderSearch] = useState("");
+  const [recentSalesMonth, setRecentSalesMonth] = useState(today.slice(0, 7));
+
  const videoRef = useRef<HTMLVideoElement | null>(null);
-const scannerRef = useRef<BrowserMultiFormatReader | null>(null);
+const scannerRef = useRef<any>(null);
 const controlsRef = useRef<any>(null);
 
 const [scanning, setScanning] = useState(false);
@@ -183,62 +252,63 @@ return Array.from(set).sort().reverse();
 async function loadAll() {
   setLoading(true);
 
-  const [
-    productsResult,
-    purchasesResult,
-    salesResult,
-  ] = await Promise.all([
-    supabase
-      .from("products")
-      .select("*")
-      .order("created_at", { ascending: false })
-      .limit(1000),
+  const withTimeout = async (request, label) => {
+    try {
+      return await Promise.race([
+        request,
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error(label + "の読み込みがタイムアウトしました。")), 10000)
+        ),
+      ]);
+    } catch (error) {
+      return {
+        data: null,
+        error: {
+          message: error instanceof Error ? error.message : label + "の読み込みに失敗しました。",
+        },
+      };
+    }
+  };
 
-    supabase
-      .from("purchase_history")
-      .select("*")
-      .order("purchase_date", { ascending: false })
-      .limit(2000),
-
-    supabase
-      .from("sales_history")
-      .select("*")
-      .eq("is_cancelled", false)
-      .order("sale_date", { ascending: false })
-      .limit(2000),
+  const [productsResult, purchasesResult, salesResult] = await Promise.all([
+    withTimeout(
+      supabase.from("products").select("*").order("created_at", { ascending: false }).limit(1000),
+      "商品"
+    ),
+    withTimeout(
+      supabase.from("purchase_history").select("*").order("purchase_date", { ascending: false }).limit(2000),
+      "仕入履歴"
+    ),
+    withTimeout(
+      supabase.from("sales_history").select("*").eq("is_cancelled", false).order("created_at", { ascending: false, nullsFirst: false })
+      // 「最近の売上」は売上日ではなく、実際に登録した順で新しいものを上に表示する。
+      .order("sale_date", { ascending: false }).limit(2000),
+      "売上履歴"
+    ),
   ]);
 
+  let firstError = "";
+
   if (productsResult.error) {
-    setMessage(
-      `商品読み込みエラー：${productsResult.error.message}`
-    );
+    firstError ||= "商品読み込みエラー：" + productsResult.error.message;
   } else {
-    setProducts(
-      (productsResult.data ?? []) as Product[]
-    );
+    setProducts((productsResult.data ?? []) as Product[]);
   }
 
   if (purchasesResult.error) {
-    setMessage(
-      `仕入履歴読み込みエラー：${purchasesResult.error.message}`
-    );
+    firstError ||= "仕入履歴読み込みエラー：" + purchasesResult.error.message;
   } else {
-    setPurchases(
-      (purchasesResult.data ?? []) as Purchase[]
-    );
+    setPurchases((purchasesResult.data ?? []) as Purchase[]);
   }
 
-if (salesResult.error) {
-  setMessage(
-    `売上履歴読み込みエラー：${salesResult.error.message}`
-  );
-} else {
-  setSales(
-    (salesResult.data ?? []) as Sale[]
-  );
-}
+  if (salesResult.error) {
+    firstError ||= "売上履歴読み込みエラー：" + salesResult.error.message;
+  } else {
+    setSales((salesResult.data ?? []) as Sale[]);
+  }
 
-setLoading(false);
+  if (firstError) setMessage(firstError);
+  setLoading(false);
 }
 useEffect(() => {
   loadAll();
@@ -282,8 +352,9 @@ useEffect(() => {
         return;
       }
 
-      const reader =
-        new BrowserMultiFormatReader();
+      const ZXingBrowser = await import("@zxing/browser");
+      const Reader = ZXingBrowser.BrowserMultiFormatReader as any;
+      const reader = new Reader();
 
       scannerRef.current = reader;
 
@@ -398,11 +469,69 @@ useEffect(() => {
   };
 }, [scanning]);
 
+  // JANカメラ起動時に、カメラ表示をスマホ幅いっぱいに整える。
+  useEffect(() => {
+    if (!scanning) return;
+
+    const timer = window.setTimeout(() => {
+      const video = videoRef.current;
+      if (!video) return;
+
+      video.style.width = "100%";
+      video.style.maxWidth = "none";
+      video.style.height = "min(72vh, 680px)";
+      video.style.minHeight = "45vh";
+      video.style.display = "block";
+      video.style.objectFit = "contain";
+      video.style.margin = "0";
+      video.style.background = "#111";
+      video.style.borderRadius = "12px";
+
+      let node = video.parentElement;
+      for (let i = 0; node && i < 6; i += 1) {
+        const computed = window.getComputedStyle(node);
+        if (computed.display === "flex") {
+          node.style.flexDirection = "column";
+          node.style.alignItems = "stretch";
+          node.style.justifyContent = "center";
+          node.style.width = "calc(100vw - 24px)";
+          node.style.maxWidth = "720px";
+          node.style.marginLeft = "auto";
+          node.style.marginRight = "auto";
+          node.style.boxSizing = "border-box";
+          node.style.gap = "10px";
+          break;
+        }
+        node = node.parentElement;
+      }
+
+      const parent = video.parentElement;
+      if (parent) {
+        parent.style.width = "100%";
+        parent.style.maxWidth = "none";
+        parent.style.boxSizing = "border-box";
+      }
+    }, 50);
+
+    return () => window.clearTimeout(timer);
+  }, [scanning]);
+
   const monthSales = useMemo(() => {
   return sales.filter(
     (sale) => monthOf(sale.sale_date) === selectedMonth
   );
 }, [sales, selectedMonth]);
+
+  const filteredRecentSales = useMemo(() => {
+    const keyword = recentSalesOrderSearch.trim().toLowerCase();
+
+    return sales.filter((sale) => {
+      const matchesMonth = monthOf(sale.sale_date) === recentSalesMonth;
+      const matchesOrder = !keyword ||
+        String(sale.order_number ?? "").toLowerCase().includes(keyword);
+      return matchesMonth && matchesOrder;
+    });
+  }, [sales, recentSalesMonth, recentSalesOrderSearch]);
   
   const monthPurchases = useMemo(() => {
     return purchases.filter(
@@ -597,13 +726,20 @@ const salesMonthDiffRate =
         productForm.category.trim() || null,
       stock_quantity:
         Number(productForm.stock_quantity || 0),
+      // products.cost_price is NOT NULL in Supabase.
+      // When a product is registered from JAN search, the purchase cost may
+      // not be known yet, so store 0 and allow the real cost to be entered
+      // later through purchase registration.
       cost_price:
         productForm.cost_price === ""
-          ? null
+          ? 0
           : Number(productForm.cost_price),
+      // products.selling_price is NOT NULL in Supabase.
+      // JAN検索だけで商品登録する場合は販売価格が未確定なので、
+      // 空欄は0として保存し、後から商品編集で価格を設定できるようにする。
       selling_price:
         productForm.selling_price === ""
-          ? null
+          ? 0
           : Number(productForm.selling_price),
     };
 
@@ -639,9 +775,13 @@ const salesMonthDiffRate =
           .from("products")
           .update(payload)
           .eq("id", editingProductId)
+          .select("*")
+          .single()
       : await supabase
           .from("products")
-          .insert(payload);
+          .insert(payload)
+          .select("*")
+          .single();
 
     if (result.error) {
       setMessage(
@@ -654,8 +794,18 @@ const salesMonthDiffRate =
           : "商品を登録しました。"
       );
 
+      const savedProduct = result.data as Product | null;
+      if (savedProduct) {
+        setProducts((prev) => {
+          if (editingProductId) {
+            return prev.map((product) =>
+              product.id === editingProductId ? savedProduct : product
+            );
+          }
+          return [savedProduct, ...prev];
+        });
+      }
       resetProductForm();
-      await loadAll();
     }
 
     setSaving(false);
@@ -817,9 +967,32 @@ async function savePurchase(
 
     setMessage("仕入を登録しました。");
 
-    setPurchaseForm(initialPurchaseForm);
+    // 登録直後に全履歴を再取得せず、RPCの結果をローカル状態へ反映する。
+    const newPurchase: Purchase = {
+      id: String(data.purchase_id),
+      product_id: purchaseForm.product_id,
+      purchase_date: purchaseForm.purchase_date,
+      supplier: purchaseForm.supplier.trim() || null,
+      unit_cost: unitCost,
+      quantity,
+      total_cost: unitCost * quantity,
+      notes: purchaseForm.notes.trim() || null,
+    };
 
-    await loadAll();
+    setPurchases((prev) => [newPurchase, ...prev]);
+    setProducts((prev) =>
+      prev.map((item) =>
+        item.id === purchaseForm.product_id
+          ? {
+              ...item,
+              stock_quantity: Number(data.stock_after ?? item.stock_quantity ?? 0),
+              cost_price: unitCost,
+            }
+          : item
+      )
+    );
+
+    setPurchaseForm(initialPurchaseForm);
 
   } catch (error: any) {
     setMessage(
@@ -859,13 +1032,18 @@ async function saveSale(
     saleForm.quantity || 0
   );
 
+  const shippingCost = Number(
+    saleForm.shipping_cost || 0
+  );
+
   if (
     unitPrice < 0 ||
     unitCost < 0 ||
+    shippingCost < 0 ||
     quantity <= 0
   ) {
     setMessage(
-      "販売価格・原価・数量を正しく入力してください。"
+      "販売価格・原価・送料・数量を正しく入力してください。"
     );
     return;
   }
@@ -874,18 +1052,42 @@ async function saveSale(
   setMessage("");
 
   try {
-    // 商品を取得して在庫数を確認
-    const product = products.find(
-      (item) => item.id === saleForm.product_id
-    );
+    // 売上登録直前にDBから最新在庫を取得する。
+    // 画面に残っている古いproducts配列を在庫判定に使わない。
+    const { data: latestProduct, error: latestProductError } =
+      await supabase
+        .from("products")
+        .select("id, name, stock_quantity, selling_price, cost_price")
+        .eq("id", saleForm.product_id)
+        .single();
 
-    if (!product) {
-      setMessage("商品が見つかりません。");
+    if (latestProductError || !latestProduct) {
+      setMessage(
+        `商品在庫の取得に失敗しました：${
+          latestProductError?.message || "商品が見つかりません。"
+        }`
+      );
       return;
     }
 
     const currentStock = Number(
-      product.stock_quantity || 0
+      latestProduct.stock_quantity || 0
+    );
+
+    // 画面側の商品一覧も最新在庫へ同期する。
+    setProducts((currentProducts) =>
+      currentProducts.map((item) =>
+        item.id === latestProduct.id
+          ? {
+              ...item,
+              stock_quantity: currentStock,
+              selling_price:
+                latestProduct.selling_price ?? item.selling_price,
+              cost_price:
+                latestProduct.cost_price ?? item.cost_price,
+            }
+          : item
+      )
     );
 
     const newStock =
@@ -894,7 +1096,7 @@ async function saveSale(
     // 在庫不足チェック
     if (newStock < 0) {
       setMessage(
-        `在庫が不足しています。現在庫：${currentStock}個`
+        `在庫が不足しています。現在庫：${currentStock}個、販売数量：${quantity}個`
       );
       return;
     }
@@ -957,6 +1159,34 @@ async function saveSale(
     }
 
     // ==========================================
+    // 送料保存
+    // ==========================================
+    let saleId = data?.sale_id ?? data?.id ?? null;
+
+    if (!saleId) {
+      const { data: latestSale } = await supabase
+        .from("sales_history")
+        .select("id")
+        .eq("product_id", saleForm.product_id)
+        .eq("sale_date", saleForm.sale_date)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      saleId = latestSale?.id ?? null;
+    }
+
+    if (saleId) {
+      const { error: shippingError } = await supabase.rpc("set_sale_shipping_cost", {
+        p_sale_id: saleId,
+        p_shipping_cost: shippingCost,
+      });
+      if (shippingError) {
+        setMessage(`送料の保存に失敗しました：${shippingError.message}`);
+        return;
+      }
+    }
+
+    // ==========================================
     // 登録成功
     // ==========================================
 
@@ -964,9 +1194,54 @@ async function saveSale(
       "売上を登録しました。"
     );
 
+    // 登録直後に全履歴を再取得せず、RPCの結果をローカル状態へ反映する。
+    const newSale: Sale = {
+      id: String(data.sale_id),
+      product_id: saleForm.product_id,
+      sale_date: saleForm.sale_date,
+      sales_channel: saleForm.sales_channel.trim() || null,
+      order_number: saleForm.order_number.trim() || null,
+      unit_price: unitPrice,
+      unit_cost: Number(data.unit_cost ?? unitCost),
+      quantity,
+      total_sales: Number(data.total_sales ?? unitPrice * quantity),
+      total_cost: Number(data.total_cost ?? Number(data.unit_cost ?? unitCost) * quantity),
+      gross_profit: Number(data.gross_profit ?? ((unitPrice - Number(data.unit_cost ?? unitCost)) * quantity)),
+      notes: saleForm.notes.trim() || null,
+      is_cancelled: false,
+      created_at: new Date().toISOString(),
+    };
+
+    setSales((prev) => [newSale, ...prev]);
+    setProducts((prev) =>
+      prev.map((item) =>
+        item.id === saleForm.product_id
+          ? {
+              ...item,
+              stock_quantity: Number(data.stock_after ?? Math.max(0, Number(item.stock_quantity ?? 0) - quantity)),
+            }
+          : item
+      )
+    );
+
     setSaleForm(initialSaleForm);
 
-    await loadAll();
+    // FINAL: stay on sales tab after sale registration
+    setTab("sales");
+    if (typeof window !== "undefined") {
+      const restoreSaleView = () => {
+        try {
+          const activeEl = document.activeElement;
+          if (activeEl instanceof HTMLElement) {
+            activeEl.blur();
+          }
+        } catch {}
+        window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+      };
+      requestAnimationFrame(restoreSaleView);
+      window.setTimeout(restoreSaleView, 50);
+      window.setTimeout(restoreSaleView, 200);
+    }
 
   } catch (error: any) {
 
@@ -987,7 +1262,7 @@ async function saveSale(
 function editSale(sale: Sale) {
   if (sale.is_cancelled) { setMessage("取消済みの売上は編集できません。"); return; }
   setEditingSaleId(sale.id);
-  setSaleForm({ product_id: sale.product_id, sale_date: sale.sale_date, sales_channel: sale.sales_channel ?? "楽天市場", order_number: sale.order_number ?? "", unit_price: String(sale.unit_price ?? ""), unit_cost: String(sale.unit_cost ?? ""), quantity: String(sale.quantity ?? 1), notes: sale.notes ?? "" });
+  setSaleForm({ product_id: sale.product_id, sale_date: sale.sale_date, sales_channel: sale.sales_channel ?? "楽天市場", order_number: sale.order_number ?? "", unit_price: String(sale.unit_price ?? ""), unit_cost: String(sale.unit_cost ?? ""), quantity: String(sale.quantity ?? 1), shipping_cost: String(sale.shipping_cost ?? ""), notes: sale.notes ?? "" });
   setTab("sales");
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
@@ -999,15 +1274,15 @@ async function updateSale(event: React.FormEvent) {
   const original = sales.find((item) => item.id === editingSaleId);
   if (!original) { setMessage("編集対象の売上が見つかりません。"); return; }
   if (original.product_id !== saleForm.product_id) { setMessage("売上商品の変更は安全のためできません。取消して新しく登録してください。"); return; }
-  const unitPrice = Number(saleForm.unit_price || 0), unitCost = Number(saleForm.unit_cost || 0), quantity = Number(saleForm.quantity || 0);
-  if (unitPrice < 0 || unitCost < 0 || quantity <= 0) { setMessage("販売価格・原価・数量を正しく入力してください。"); return; }
+  const unitPrice = Number(saleForm.unit_price || 0), unitCost = Number(saleForm.unit_cost || 0), quantity = Number(saleForm.quantity || 0), shippingCost = Number(saleForm.shipping_cost || 0);
+  if (unitPrice < 0 || unitCost < 0 || shippingCost < 0 || quantity <= 0) { setMessage("販売価格・原価・数量を正しく入力してください。"); return; }
   setSaving(true); setMessage("");
   try {
     const product = products.find((item) => item.id === original.product_id);
     if (!product) throw new Error("商品が見つかりません。");
     const currentStock = Number(product.stock_quantity || 0), delta = Number(original.quantity) - quantity;
     if (currentStock + delta < 0) throw new Error(`在庫が不足しています。現在庫：${currentStock}個`);
-    const { error: ue } = await supabase.from("sales_history").update({ sale_date: saleForm.sale_date, sales_channel: saleForm.sales_channel.trim() || null, order_number: saleForm.order_number.trim() || null, unit_price: unitPrice, unit_cost: unitCost, quantity, total_sales: unitPrice * quantity, total_cost: unitCost * quantity, gross_profit: (unitPrice - unitCost) * quantity, notes: saleForm.notes.trim() || null }).eq("id", editingSaleId);
+    const { error: ue } = await supabase.from("sales_history").update({ sale_date: saleForm.sale_date, sales_channel: saleForm.sales_channel.trim() || null, order_number: saleForm.order_number.trim() || null, unit_price: unitPrice, unit_cost: unitCost, quantity, total_sales: unitPrice * quantity, total_cost: unitCost * quantity, gross_profit: (unitPrice - unitCost) * quantity - shippingCost, shipping_cost: shippingCost, notes: saleForm.notes.trim() || null }).eq("id", editingSaleId);
     if (ue) throw ue;
     const { error: se } = await supabase.from("products").update({ stock_quantity: currentStock + delta }).eq("id", original.product_id);
     if (se) throw se;
@@ -1449,6 +1724,10 @@ async function cancelSale(sale: any) {
   style={{
     ...cardStyle,
     cursor: "pointer",
+    display:
+      typeof window !== "undefined" && window.innerWidth <= 767
+        ? "none"
+        : undefined,
   }}
   onClick={() => setTab("products")}
 >
@@ -1696,28 +1975,29 @@ async function cancelSale(sale: any) {
       取消済み
     </span>
   ) : (
-    <button
-      type="button"
-      onClick={() => editSale(sale)}
-      style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #d1d5db", background: "#fff", color: "#111827", fontWeight: 700, cursor: "pointer", marginRight: 6 }}
-    >
-      編集
-    </button>
-    <button
-      type="button"
-      onClick={() => cancelSale(sale)}
-      style={{
-        padding: "6px 12px",
-        borderRadius: 8,
-        border: "1px solid #f0b4b4",
-        background: "#fff5f5",
-        color: "#b42318",
-        fontWeight: 700,
-        cursor: "pointer",
-      }}
-    >
-      取消
-    </button>
+    <>
+      <><button
+        type="button"
+        onClick={() => editSale(sale)}
+        style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #d1d5db", background: "#fff", color: "#111827", fontWeight: 700, cursor: "pointer", marginRight: 6 }}
+      >
+        編集
+      </button><button
+        type="button"
+        onClick={() => cancelSale(sale)}
+        style={{
+          padding: "6px 12px",
+          borderRadius: 8,
+          border: "1px solid #f0b4b4",
+          background: "#fff5f5",
+          color: "#b42318",
+          fontWeight: 700,
+          cursor: "pointer",
+        }}
+      >
+        取消
+      </button></>
+    </>
   )}
 </td>
                         </tr>
@@ -1732,6 +2012,7 @@ async function cancelSale(sale: any) {
 
         {tab === "products" && (
           <>
+            <ProductPriceResearchPanel products={products} visible={tab === "products"} />
             <section style={cardStyle}>
               <h2>
                 {editingProductId
@@ -1805,7 +2086,7 @@ async function cancelSale(sale: any) {
  <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
   <button
     type="button"
-    onClick={startJanScanner}
+    onClick={() => startJanScanner("product")}
     style={{
       padding: "12px 18px",
       background: "#15803d",
@@ -1837,8 +2118,12 @@ async function cancelSale(sale: any) {
       playsInline
       style={{
         width: "100%",
+        height: "min(72vh, 680px)",
+        minHeight: "45vh",
         display: "block",
-        borderRadius: 8,
+        objectFit: "contain",
+        borderRadius: 12,
+        background: "#111",
       }}
     />
 
@@ -1932,59 +2217,8 @@ async function cancelSale(sale: any) {
                     />
                   </label>
 
-                  <label>
-                    在庫数
-                    <input
-                      style={inputStyle}
-                      type="number"
-                      value={
-                        productForm.stock_quantity
-                      }
-                      onChange={(e) =>
-                        setProductForm({
-                          ...productForm,
-                          stock_quantity:
-                            e.target.value,
-                        })
-                      }
-                    />
-                  </label>
 
-                  <label>
-                    現在の参考仕入価格
-                    <input
-                      style={inputStyle}
-                      type="number"
-                      value={
-                        productForm.cost_price
-                      }
-                      onChange={(e) =>
-                        setProductForm({
-                          ...productForm,
-                          cost_price:
-                            e.target.value,
-                        })
-                      }
-                    />
-                  </label>
 
-                  <label>
-                    現在の参考販売価格
-                    <input
-                      style={inputStyle}
-                      type="number"
-                      value={
-                        productForm.selling_price
-                      }
-                      onChange={(e) =>
-                        setProductForm({
-                          ...productForm,
-                          selling_price:
-                            e.target.value,
-                        })
-                      }
-                    />
-                  </label>
                 </div>
 
                 <div
@@ -2088,7 +2322,7 @@ async function cancelSale(sale: any) {
                         在庫
                       </th>
                       <th style={{ textAlign: "right", padding: 10 }}>
-                        参考仕入
+                        在庫仕入金額
                       </th>
                       <th style={{ textAlign: "right", padding: 10 }}>
                         参考販売
@@ -2140,10 +2374,12 @@ async function cancelSale(sale: any) {
                             style={{
                               padding: 10,
                               textAlign: "right",
+                              fontWeight: 700,
                             }}
                           >
                             {yen(
-                              product.cost_price
+                              Number(product.stock_quantity || 0) *
+                              Number(product.cost_price || 0)
                             )}
                           </td>
 
@@ -2158,7 +2394,7 @@ async function cancelSale(sale: any) {
                             )}
                           </td>
 
-                          <td style={{ padding: 10 }}>
+                          <td style={{ padding: 10, position: "sticky", right: 0, background: "#fff", zIndex: 1 }}>
                             <div
                               style={{
                                 display: "flex",
@@ -2379,6 +2615,9 @@ async function cancelSale(sale: any) {
                             数量
                           </th>
                           <th style={{ padding: 8 }}>
+                            送料
+                          </th>
+                          <th style={{ padding: 8 }}>
                             粗利
                           </th>
                         </tr>
@@ -2411,6 +2650,10 @@ async function cancelSale(sale: any) {
 
                               <td style={{ padding: 8 }}>
                                 {sale.quantity}
+                              </td>
+
+                              <td style={{ padding: 8 }}>
+                                {yen(sale.shipping_cost)}
                               </td>
 
                               <td
@@ -2459,39 +2702,38 @@ async function cancelSale(sale: any) {
                 >
                   <label>
                     商品*
-                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                    <select
-                      style={{ ...inputStyle, flex: 1 }}
-                      value={
-                        purchaseForm.product_id
-                      }
-                      onChange={(e) =>
-                        setPurchaseForm({
-                          ...purchaseForm,
-                          product_id:
-                            e.target.value,
-                        })
-                      }
-                    >
-                      <option value="">
-                        商品を選択
-                      </option>
-
-                      {products.map(
-                        (product) => (
-                          <option
-                            key={product.id}
-                            value={product.id}
-                          >
-                            {product.name}
+                    <input
+                      style={inputStyle}
+                      type="search"
+                      value={purchaseProductSearch}
+                      onChange={(e) => setPurchaseProductSearch(e.target.value)}
+                      placeholder="商品名・JAN・SKU・型番・ブランドで検索"
+                    />
+                    <div style={{ marginTop: 6, fontSize: 12, color: "#6b7280" }}>
+                      {purchaseProductSearch.trim() ? filteredPurchaseProducts.length + "件が該当" : products.length + "件の商品から選択"}
+                    </div>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
+                      <select
+                        style={{ ...inputStyle, flex: 1 }}
+                        value={purchaseForm.product_id}
+                        onChange={(e) => setPurchaseForm({ ...purchaseForm, product_id: e.target.value })}
+                      >
+                        <option value="">商品を選択</option>
+                        {filteredPurchaseProducts.map((product) => (
+                          <option key={product.id} value={product.id}>
+                            {product.name}{product.jan_code ? "　[" + product.jan_code + "]" : ""}
                           </option>
-                        )
-                      )}
-                    </select>
-                    <button type="button" onClick={() => startJanScanner("purchase")} style={{ border: "none", background: "#15803d", color: "#fff", borderRadius: 10, padding: "12px 14px", fontWeight: 800, whiteSpace: "nowrap" }}>📷 JAN</button>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => startJanScanner("purchase")}
+                        style={{ border: "none", background: "#15803d", color: "#fff", borderRadius: 10, padding: "12px 14px", fontWeight: 800, whiteSpace: "nowrap", cursor: "pointer" }}
+                      >
+                        📷 JAN
+                      </button>
                     </div>
                   </label>
-
                   <label>
                     仕入日
                     <input
@@ -2736,57 +2978,38 @@ async function cancelSale(sale: any) {
                 >
                   <label>
                     商品*
-                    <select
+                    <input
                       style={inputStyle}
-                      value={
-                        saleForm.product_id
-                      }
+                      type="search"
+                      value={saleProductSearch}
+                      onChange={(e) => setSaleProductSearch(e.target.value)}
+                      placeholder="商品名・JAN・SKU・型番・ブランドで検索"
+                    />
+                    <div style={{ marginTop: 6, fontSize: 12, color: "#6b7280" }}>
+                      {saleProductSearch.trim() ? filteredSaleProducts.length + "件が該当" : products.length + "件の商品から選択"}
+                    </div>
+                    <select
+                      style={{ ...inputStyle, marginTop: 6 }}
+                      value={saleForm.product_id}
                       onChange={(e) => {
-                        const product =
-                          products.find(
-                            (item) =>
-                              item.id ===
-                              e.target.value
-                          );
-
+                        const product = products.find((item) => item.id === e.target.value);
                         setSaleForm({
                           ...saleForm,
-                          product_id:
-                            e.target.value,
-                          unit_price:
-                            product?.selling_price !=
-                            null
-                              ? String(
-                                  product.selling_price
-                                )
-                              : saleForm.unit_price,
-                          unit_cost:
-                            product?.cost_price !=
-                            null
-                              ? String(
-                                  product.cost_price
-                                )
-                              : saleForm.unit_cost,
+                          product_id: e.target.value,
+                          unit_price: product?.selling_price != null ? String(product.selling_price) : saleForm.unit_price,
+                          unit_cost: product?.cost_price != null ? String(product.cost_price) : saleForm.unit_cost,
                         });
+                        setSaleProductSearch("");
                       }}
                     >
-                      <option value="">
-                        商品を選択
-                      </option>
-
-                      {products.map(
-                        (product) => (
-                          <option
-                            key={product.id}
-                            value={product.id}
-                          >
-                            {product.name}
-                          </option>
-                        )
-                      )}
+                      <option value="">商品を選択</option>
+                      {filteredSaleProducts.map((product) => (
+                        <option key={product.id} value={product.id}>
+                          {product.name}{product.jan_code ? "　[" + product.jan_code + "]" : ""}
+                        </option>
+                      ))}
                     </select>
                   </label>
-
                   <label>
                     売上日
                     <input
@@ -2912,6 +3135,23 @@ async function cancelSale(sale: any) {
                   </label>
 
                   <label>
+                    送料
+                    <input
+                      style={inputStyle}
+                      type="number"
+                      min="0"
+                      value={saleForm.shipping_cost}
+                      onChange={(e) =>
+                        setSaleForm({
+                          ...saleForm,
+                          shipping_cost: e.target.value,
+                        })
+                      }
+                      placeholder="例：750"
+                    />
+                  </label>
+
+                  <label>
                     メモ
                     <input
                       style={inputStyle}
@@ -2949,24 +3189,26 @@ async function cancelSale(sale: any) {
                     )}
                   </strong>
 
+                  <strong>
+                    送料{" "}
+                    {yen(Number(saleForm.shipping_cost || 0))}
+                  </strong>
+
                   <strong
                     style={{
-                      color: "#15803d",
+                      color:
+                        (Number(saleForm.unit_price || 0) * Number(saleForm.quantity || 0) -
+                          Number(saleForm.unit_cost || 0) * Number(saleForm.quantity || 0) -
+                          Number(saleForm.shipping_cost || 0)) >= 0
+                          ? "#15803d"
+                          : "#dc2626",
                     }}
                   >
-                    粗利{" "}
+                    実質粗利{" "}
                     {yen(
-                      (Number(
-                        saleForm.unit_price ||
-                          0
-                      ) -
-                        Number(
-                          saleForm.unit_cost ||
-                            0
-                        )) *
-                        Number(
-                          saleForm.quantity || 0
-                        )
+                      Number(saleForm.unit_price || 0) * Number(saleForm.quantity || 0) -
+                        Number(saleForm.unit_cost || 0) * Number(saleForm.quantity || 0) -
+                        Number(saleForm.shipping_cost || 0)
                     )}
                   </strong>
                 </div>
@@ -2993,7 +3235,61 @@ async function cancelSale(sale: any) {
             </section>
 
             <section style={cardStyle}>
-              <h2>最近の売上</h2>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: 12,
+                  flexWrap: "wrap",
+                  marginBottom: 15,
+                }}
+              >
+                <h2 style={{ margin: 0 }}>最近の売上</h2>
+
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 10,
+                    flexWrap: "wrap",
+                    alignItems: "center",
+                  }}
+                >
+                  <label style={{ fontWeight: 700 }}>
+                    月
+                    <select
+                      value={recentSalesMonth}
+                      onChange={(e) => setRecentSalesMonth(e.target.value)}
+                      style={{ ...inputStyle, marginLeft: 6, width: 150 }}
+                    >
+                      {months.map((month) => (
+                        <option value={month} key={month}>
+                          {month}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <input
+                    style={{ ...inputStyle, width: 220 }}
+                    value={recentSalesOrderSearch}
+                    onChange={(e) => setRecentSalesOrderSearch(e.target.value)}
+                    placeholder="注文番号で検索"
+                  />
+                </div>
+              </div>
+
+              <div
+                style={{
+                  marginBottom: 12,
+                  color: "#6b7280",
+                  fontSize: 13,
+                }}
+              >
+                {recentSalesOrderSearch.trim()
+                  ? recentSalesMonth + "・注文番号「" + recentSalesOrderSearch.trim() + "」の検索結果：" + filteredRecentSales.length + "件"
+                  : recentSalesMonth + "の売上：" + filteredRecentSales.length + "件"}
+              </div>
 
               <div
                 style={{
@@ -3019,10 +3315,19 @@ async function cancelSale(sale: any) {
                         販売先
                       </th>
                       <th style={{ padding: 10 }}>
+                        注文番号
+                      </th>
+                      <th style={{ padding: 10 }}>
                         数量
                       </th>
                       <th style={{ padding: 10 }}>
                         売上
+                      </th>
+                      <th style={{ padding: 10 }} data-purchase-cost-header="true">
+                        仕入値
+                      </th>
+                      <th style={{ padding: 10 }}>
+                        送料
                       </th>
                       <th style={{ padding: 10 }}>
                         粗利
@@ -3032,9 +3337,7 @@ async function cancelSale(sale: any) {
                   </thead>
 
                   <tbody>
-                    {sales
-                      .slice(0, 100)
-                      .map((sale) => (
+                    {filteredRecentSales.map((sale) => (
                         <tr key={sale.id}>
                           <td style={{ padding: 10 }}>
                             {sale.sale_date}
@@ -3052,6 +3355,10 @@ async function cancelSale(sale: any) {
                               "—"}
                           </td>
 
+                          <td style={{ padding: 10, whiteSpace: "nowrap" }}>
+                            {sale.order_number || "—"}
+                          </td>
+
                           <td style={{ padding: 10 }}>
                             {sale.quantity}
                           </td>
@@ -3060,6 +3367,14 @@ async function cancelSale(sale: any) {
                             {yen(
                               sale.total_sales
                             )}
+                          </td>
+
+                          <td style={{ padding: 10, textAlign: "right" }} data-purchase-cost-cell="true">
+                            {yen(sale.unit_cost)}
+                          </td>
+
+                          <td style={{ padding: 10 }}>
+                            {yen(sale.shipping_cost)}
                           </td>
 
                           <td style={{ padding: 10, fontWeight: 700, color: sale.gross_profit >= 0 ? "#15803d" : "#dc2626" }}>
@@ -3078,6 +3393,28 @@ async function cancelSale(sale: any) {
           </>
         )}
       </div>
-    </main>
+    
+        {/* FINAL PURCHASE JAN SCANNER */}
+        {scanning && scannerTarget === "purchase" && (
+          <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,.82)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+            <div style={{ width: "min(680px, 100%)", background: "#111827", borderRadius: 18, padding: 16, boxShadow: "0 20px 60px rgba(0,0,0,.4)" }}>
+              <div style={{ color: "#fff", fontWeight: 800, fontSize: 18, marginBottom: 10 }}>📷 JANコード読取（仕入登録）</div>
+              <video ref={videoRef} autoPlay muted playsInline style={{ width: "100%", display: "block", borderRadius: 12, background: "#000" }} />
+              <div style={{ color: "#fff", textAlign: "center", marginTop: 10, fontWeight: 700 }}>{scannerMessage}</div>
+              <button type="button" onClick={closeJanScanner} style={{ marginTop: 12, width: "100%", padding: "12px 16px", border: 0, borderRadius: 10, background: "#fff", color: "#111827", fontWeight: 800 }}>閉じる</button>
+            </div>
+          </div>
+        )}
+</main>
   );
 }
+
+// Applied purchase product search.
+
+// Applied sale product search.
+
+// Applied sale stock refresh fix.
+
+// FINAL: persist active inventory tab
+
+// Applied recent sales registration-order fix.
