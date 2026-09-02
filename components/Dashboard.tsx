@@ -655,6 +655,72 @@ const salesMonthDiffRate =
       ? (monthlyGrossProfit / monthlySalesTotal) * 100
       : 0;
 
+  // 在庫評価は products.cost_price × 在庫数 ではなく、
+  // 仕入ロットをFIFOで消化した「実際に残っている在庫」の仕入額を使う。
+  // 例：890円×1個 + 2,000円×1個が残っていれば、在庫仕入金額は2,890円。
+  const inventoryCostByProduct = useMemo(() => {
+    const result: Record<string, number> = {};
+
+    for (const product of products) {
+      const targetStock = Math.max(0, Number(product.stock_quantity || 0));
+      if (targetStock === 0) {
+        result[product.id] = 0;
+        continue;
+      }
+
+      const lots = purchases
+        .filter((purchase) => purchase.product_id === product.id && Number(purchase.quantity || 0) > 0)
+        .sort((a, b) => {
+          const dateDiff = String(a.purchase_date).localeCompare(String(b.purchase_date));
+          if (dateDiff !== 0) return dateDiff;
+          const createdDiff = String(a.created_at || "").localeCompare(String(b.created_at || ""));
+          if (createdDiff !== 0) return createdDiff;
+          return String(a.id).localeCompare(String(b.id));
+        })
+        .map((purchase) => ({
+          remaining: Number(purchase.quantity || 0),
+          unitCost: Number(purchase.unit_cost || 0),
+        }));
+
+      const sold = sales
+        .filter((sale) => sale.product_id === product.id && !sale.is_cancelled && Number(sale.quantity || 0) > 0)
+        .sort((a, b) => {
+          const dateDiff = String(a.sale_date).localeCompare(String(b.sale_date));
+          if (dateDiff !== 0) return dateDiff;
+          const createdDiff = String(a.created_at || "").localeCompare(String(b.created_at || ""));
+          if (createdDiff !== 0) return createdDiff;
+          return String(a.id).localeCompare(String(b.id));
+        });
+
+      // 仕入ロットを古い順に売上数量で消化する。
+      for (const sale of sold) {
+        let remainingSaleQty = Number(sale.quantity || 0);
+        for (const lot of lots) {
+          if (remainingSaleQty <= 0) break;
+          const consume = Math.min(lot.remaining, remainingSaleQty);
+          lot.remaining -= consume;
+          remainingSaleQty -= consume;
+        }
+      }
+
+      const lotStock = lots.reduce((sum, lot) => sum + lot.remaining, 0);
+
+      // 履歴とproducts.stock_quantityが一致する通常ケースではロット評価を使用。
+      // 棚卸し等で一時的に差がある場合は、画面の在庫数を壊さず従来値へフォールバックする。
+      if (lotStock !== targetStock) {
+        result[product.id] = targetStock * Number(product.cost_price || 0);
+        continue;
+      }
+
+      result[product.id] = lots.reduce(
+        (sum, lot) => sum + lot.remaining * lot.unitCost,
+        0
+      );
+    }
+
+    return result;
+  }, [products, purchases, sales]);
+
   const totalStock = products.reduce(
     (sum, product) =>
       sum + Number(product.stock_quantity || 0),
@@ -2376,11 +2442,9 @@ async function cancelSale(sale: any) {
                               textAlign: "right",
                               fontWeight: 700,
                             }}
+                            title="仕入履歴をFIFOで消化して残在庫の仕入額を計算"
                           >
-                            {yen(
-                              Number(product.stock_quantity || 0) *
-                              Number(product.cost_price || 0)
-                            )}
+                            {yen(inventoryCostByProduct[product.id] ?? 0)}
                           </td>
 
                           <td
