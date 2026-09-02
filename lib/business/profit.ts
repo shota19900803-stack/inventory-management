@@ -2,7 +2,7 @@ export type ProfitInput = {
   sales: number;
   cost: number;
   shipping: number;
-  material: number;
+  material?: number;
   channelFeeRate?: number;
   affiliateRate?: number;
   advertisingRate?: number;
@@ -31,13 +31,14 @@ const rate = (n: number | undefined) => Math.max(0, Number(n || 0)) / 100;
 
 /**
  * Centralized profit calculation used by management screens and future server/RPC logic.
- * Rates are percentages (e.g. 10 means 10%).
+ * Rates are percentages (e.g. 10 means 10%). Material cost is optional while legacy
+ * sales rows do not store it separately; omitted material is treated as zero.
  */
 export function calculateRealProfit(input: ProfitInput): ProfitResult {
   const sales = money(input.sales);
   const cost = money(input.cost);
   const shipping = money(input.shipping);
-  const material = money(input.material);
+  const material = money(input.material ?? 0);
   const channelFees = money(sales * rate(input.channelFeeRate));
   const affiliateFees = money(sales * rate(input.affiliateRate));
   const advertisingCost = money(sales * rate(input.advertisingRate));
