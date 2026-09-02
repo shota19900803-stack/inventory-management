@@ -4,6 +4,19 @@ const path = require("path");
 const file = path.join(process.cwd(), "components", "Dashboard.tsx");
 let source = fs.readFileSync(file, "utf8");
 
+// This optimization used to be a one-time text rewrite executed during every
+// Vercel prebuild. Once the rewrite had already been applied, the old source
+// blocks no longer existed and the script failed the entire build.
+// Make the prebuild step idempotent: if the optimized blocks are already
+// present, do nothing and exit successfully.
+const purchaseMarker = 'const newPurchase: Purchase = {';
+const saleMarker = 'const newSale: Sale = {';
+
+if (source.includes(purchaseMarker) && source.includes(saleMarker)) {
+  console.log("[performance] registration refresh optimization already applied; skipping.");
+  process.exit(0);
+}
+
 const purchaseOld = `    setMessage("仕入を登録しました。");\n\n    setPurchaseForm(initialPurchaseForm);\n\n    await loadAll();`;
 const purchaseNew = `    setMessage("仕入を登録しました。");\n\n    // 登録直後に全履歴を再取得せず、RPCの結果をローカル状態へ反映する。\n    const newPurchase: Purchase = {\n      id: String(data.purchase_id),\n      product_id: purchaseForm.product_id,\n      purchase_date: purchaseForm.purchase_date,\n      supplier: purchaseForm.supplier.trim() || null,\n      unit_cost: unitCost,\n      quantity,\n      total_cost: unitCost * quantity,\n      notes: purchaseForm.notes.trim() || null,\n    };\n\n    setPurchases((prev) => [newPurchase, ...prev]);\n    setProducts((prev) =>\n      prev.map((item) =>\n        item.id === purchaseForm.product_id\n          ? {\n              ...item,\n              stock_quantity: Number(data.stock_after ?? item.stock_quantity ?? 0),\n              cost_price: unitCost,\n            }\n          : item\n      )\n    );\n\n    setPurchaseForm(initialPurchaseForm);`;
 
