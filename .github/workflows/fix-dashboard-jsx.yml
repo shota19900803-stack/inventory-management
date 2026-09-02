@@ -39,7 +39,7 @@ jobs:
 
       - name: Verify TypeScript syntax/build
         run: |
-          npm ci
+          npm install
           npx tsc --noEmit
           npm run build
 
