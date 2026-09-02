@@ -18,9 +18,43 @@ const Dashboard = dynamic(() => import("../components/Dashboard"), {
 
 class SafeBoundary extends Component<{ children: React.ReactNode }, { hasError: boolean }> {
   state = { hasError: false };
-  static getDerivedStateFromError() { return { hasError: true }; }
-  componentDidCatch(error: unknown) { console.error("在庫管理画面エラー:", error); }
-  render() { if (this.state.hasError) return null; return this.props.children; }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: unknown) {
+    console.error("在庫管理画面エラー:", error);
+  }
+
+  handleReload = () => {
+    window.location.reload();
+  };
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <main style={{ minHeight: "100vh", background: "#f6f7f9", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, sans-serif", color: "#111827" }}>
+          <section style={{ width: "min(520px, 100%)", background: "#fff", border: "1px solid #e5e7eb", borderRadius: 20, padding: 28, boxShadow: "0 12px 30px rgba(17,24,39,.08)", textAlign: "center" }}>
+            <div style={{ fontSize: 34 }}>⚠️</div>
+            <h1 style={{ margin: "10px 0 0", fontSize: 22 }}>画面の読み込みに失敗しました</h1>
+            <p style={{ margin: "10px 0 20px", color: "#6b7280", lineHeight: 1.7 }}>
+              一時的なエラーの可能性があります。再読み込みしてもう一度お試しください。
+            </p>
+            <button
+              type="button"
+              onClick={this.handleReload}
+              style={{ border: 0, borderRadius: 12, padding: "12px 20px", background: "#111827", color: "#fff", fontWeight: 800, cursor: "pointer" }}
+            >
+              再読み込み
+            </button>
+          </section>
+        </main>
+      );
+    }
+
+    return this.props.children;
+  }
 }
 
 export default function Home() {
