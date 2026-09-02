@@ -1976,7 +1976,7 @@ async function cancelSale(sale: any) {
     </span>
   ) : (
     <>
-      <><button
+      <button
         type="button"
         onClick={() => editSale(sale)}
         style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #d1d5db", background: "#fff", color: "#111827", fontWeight: 700, cursor: "pointer", marginRight: 6 }}
@@ -1996,7 +1996,7 @@ async function cancelSale(sale: any) {
         }}
       >
         取消
-      </button></>
+      </button>
     </>
   )}
 </td>
