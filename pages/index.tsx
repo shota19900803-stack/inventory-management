@@ -1,6 +1,5 @@
 import dynamic from "next/dynamic";
-import { Component, useEffect } from "react";
-import { supabaseBrowser } from "../lib/supabase";
+import { Component } from "react";
 import SalesShippingEnhancement from "../components/SalesShippingEnhancement";
 import QuickActions from "../components/QuickActions";
 
@@ -58,140 +57,6 @@ class SafeBoundary extends Component<{ children: React.ReactNode }, { hasError: 
 }
 
 export default function Home() {
-  useEffect(() => {
-    let stopped = false;
-    let observer: MutationObserver | null = null;
-    const supabase = supabaseBrowser;
-
-    const hideLowStockCard = () => {
-      if (stopped) return true;
-      const main = document.querySelector("main");
-      if (!main) return false;
-      const leaves = Array.from(main.querySelectorAll("*"));
-      for (const leaf of leaves) {
-        if (leaf.children.length !== 0) continue;
-        const leafText = (leaf.textContent || "").replace(/\s/g, "");
-        if (!leafText.includes("在庫不足商品")) continue;
-        let node: HTMLElement | null = leaf.parentElement;
-        for (let depth = 0; node && depth < 12; depth += 1) {
-          const text = (node.textContent || "").replace(/\s/g, "");
-          if (text.includes("在庫管理") && /\d+件/.test(text)) {
-            node.style.display = "none";
-            node.setAttribute("data-low-stock-hidden", "true");
-            return true;
-          }
-          node = node.parentElement;
-        }
-      }
-      return false;
-    };
-
-    const hidePurchaseMarketCheck = () => {
-      if (stopped) return;
-      const main = document.querySelector("main");
-      if (!main) return;
-
-      const buttons = Array.from(main.querySelectorAll("button"));
-      buttons.forEach((button) => {
-        const text = (button.textContent || "").replace(/\s/g, "").trim();
-        if (text !== "相場チェック") return;
-        if (button.getAttribute("data-market-check-hidden") === "true") return;
-        button.style.display = "none";
-        button.setAttribute("data-market-check-hidden", "true");
-      });
-    };
-
-    const bindProductHistoryButtons = () => {
-      const main = document.querySelector("main");
-      if (!main) return;
-
-      const buttons = Array.from(main.querySelectorAll("button"));
-      buttons.forEach((button) => {
-        const text = (button.textContent || "").trim();
-        if (text !== "履歴") return;
-        if (button.getAttribute("data-product-history-bound") === "true") return;
-
-        button.setAttribute("data-product-history-bound", "true");
-        button.addEventListener("click", async (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-
-          const row = button.closest("tr");
-          if (!row) return;
-
-          const cells = Array.from(row.querySelectorAll("td"));
-          const rowText = (cells[0]?.textContent || "").trim();
-          if (!rowText) return;
-
-          button.disabled = true;
-          const originalText = button.textContent;
-          button.textContent = "読込中…";
-
-          try {
-            const janMatches = rowText.match(/\d{13}/g) || [];
-            let productId: string | null = null;
-
-            if (janMatches.length > 0) {
-              const jan = janMatches[janMatches.length - 1];
-              const { data, error } = await supabase
-                .from("products")
-                .select("id")
-                .eq("jan_code", jan)
-                .limit(1)
-                .maybeSingle();
-
-              if (error) throw error;
-              productId = data?.id ?? null;
-            }
-
-            if (!productId) {
-              const { data, error } = await supabase
-                .from("products")
-                .select("id")
-                .eq("name", rowText)
-                .limit(1)
-                .maybeSingle();
-
-              if (error) throw error;
-              productId = data?.id ?? null;
-            }
-
-            if (!productId) {
-              alert("この商品の履歴を開けませんでした。JANコードまたは商品情報を確認してください。");
-              return;
-            }
-
-            window.location.href = `/product-history?productId=${encodeURIComponent(productId)}`;
-          } catch (error) {
-            console.error("商品履歴への移動に失敗:", error);
-            alert("商品履歴を開けませんでした。もう一度お試しください。");
-          } finally {
-            button.disabled = false;
-            button.textContent = originalText || "履歴";
-          }
-        });
-      });
-    };
-
-    const run = () => {
-      hideLowStockCard();
-      hidePurchaseMarketCheck();
-      bindProductHistoryButtons();
-    };
-
-    run();
-    const timer = window.setInterval(run, 700);
-    observer = new MutationObserver(run);
-    const root = document.querySelector("main") || document.body;
-    observer.observe(root, { childList: true, subtree: true });
-
-    return () => {
-      stopped = true;
-      window.clearInterval(timer);
-      observer?.disconnect();
-    };
-  }, []);
-
   return (
     <>
       <SafeBoundary><Dashboard /></SafeBoundary>
@@ -203,3 +68,5 @@ export default function Home() {
     </>
   );
 }
+
+// Keep the entrypoint intentionally thin; feature logic lives in dedicated components.
