@@ -9,6 +9,18 @@ const DEFAULT_POSITION = {
   right: 30,
 };
 
+const clampPosition = (top: number, right: number) => {
+  const panelWidth = Math.min(560, Math.max(260, window.innerWidth - 24));
+  const panelHeight = 180;
+  const maxRight = Math.max(12, window.innerWidth - panelWidth - 12);
+  const maxTop = Math.max(12, window.innerHeight - panelHeight);
+
+  return {
+    top: Math.min(Math.max(12, top), maxTop),
+    right: Math.min(Math.max(12, right), maxRight),
+  };
+};
+
 export default function QuickActions() {
   const [position, setPosition] = useState(DEFAULT_POSITION);
   const [dragging, setDragging] = useState(false);
@@ -30,10 +42,14 @@ export default function QuickActions() {
           typeof parsed?.top === "number" &&
           typeof parsed?.right === "number"
         ) {
-          setPosition({ top: parsed.top, right: parsed.right });
+          setPosition(clampPosition(parsed.top, parsed.right));
         }
+      } else {
+        setPosition(clampPosition(DEFAULT_POSITION.top, DEFAULT_POSITION.right));
       }
-    } catch {}
+    } catch {
+      setPosition(clampPosition(DEFAULT_POSITION.top, DEFAULT_POSITION.right));
+    }
 
     const hideLegacyShippingButton = () => {
       if (disposed) return;
@@ -66,16 +82,7 @@ export default function QuickActions() {
 
   useEffect(() => {
     const handleResize = () => {
-      setPosition((current) => {
-        const panelWidth = Math.min(560, Math.max(260, window.innerWidth - 60));
-        const maxRight = Math.max(10, window.innerWidth - panelWidth - 10);
-        const maxTop = Math.max(10, window.innerHeight - 90);
-
-        return {
-          top: Math.min(Math.max(10, current.top), maxTop),
-          right: Math.min(Math.max(10, current.right), maxRight),
-        };
-      });
+      setPosition((current) => clampPosition(current.top, current.right));
     };
 
     window.addEventListener("resize", handleResize);
@@ -111,22 +118,12 @@ export default function QuickActions() {
 
     const deltaX = event.clientX - dragRef.current.startX;
     const deltaY = event.clientY - dragRef.current.startY;
+    const next = clampPosition(
+      dragRef.current.startTop + deltaY,
+      dragRef.current.startRight - deltaX
+    );
 
-    const panelWidth = Math.min(560, Math.max(260, window.innerWidth - 60));
-    const panelHeight = 120;
-    const maxRight = Math.max(10, window.innerWidth - panelWidth - 10);
-    const maxTop = Math.max(10, window.innerHeight - panelHeight);
-
-    setPosition({
-      top: Math.min(
-        Math.max(10, dragRef.current.startTop + deltaY),
-        maxTop
-      ),
-      right: Math.min(
-        Math.max(10, dragRef.current.startRight - deltaX),
-        maxRight
-      ),
-    });
+    setPosition(next);
   };
 
   const endDrag = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -141,7 +138,7 @@ export default function QuickActions() {
   };
 
   const resetPosition = () => {
-    setPosition(DEFAULT_POSITION);
+    setPosition(clampPosition(DEFAULT_POSITION.top, DEFAULT_POSITION.right));
   };
 
   const buttonStyle = (background: string): React.CSSProperties => ({
@@ -160,12 +157,13 @@ export default function QuickActions() {
   return (
     <section
       data-quick-actions
+      aria-label="よく使う機能"
       style={{
         position: "fixed",
         top: position.top,
         right: position.right,
         zIndex: 1050,
-        width: "min(560px, calc(100vw - 60px))",
+        width: "min(560px, calc(100vw - 24px))",
         padding: 12,
         borderRadius: 16,
         background: "rgba(255,255,255,.97)",
@@ -208,6 +206,7 @@ export default function QuickActions() {
           onPointerDown={(event) => event.stopPropagation()}
           onClick={resetPosition}
           title="初期位置に戻す"
+          aria-label="Quick Actionsを初期位置に戻す"
           style={{
             border: "1px solid #e2e8f0",
             background: "#f8fafc",
