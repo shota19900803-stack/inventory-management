@@ -49,12 +49,14 @@ export function summarizeMonth(
   const expenseTotal = monthExpenses.reduce((sum, expense) => sum + n(expense.amount), 0);
   const purchaseTotal = monthPurchases.reduce((sum, purchase) => sum + n(purchase.total_cost), 0);
 
-  // Keep the management screen's current gross-profit metric compatible while
-  // exposing a normalized calculation for future channel-cost integration.
+  // Material is currently not stored in the legacy sales row, so explicitly use 0
+  // until that cost is modeled. Keeping the argument explicit prevents accidental
+  // omission when profit.ts evolves and makes this adapter type-safe.
   const normalized = calculateRealProfit({
     sales: salesTotal,
     cost: costTotal,
     shipping: shippingTotal,
+    material: 0,
   });
 
   return {
