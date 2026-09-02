@@ -3388,7 +3388,7 @@ async function cancelSale(sale: any) {
                         売上
                       </th>
                       <th style={{ padding: 10 }} data-purchase-cost-header="true">
-                        仕入値
+                        仕入値合計
                       </th>
                       <th style={{ padding: 10 }}>
                         送料
@@ -3434,7 +3434,7 @@ async function cancelSale(sale: any) {
                           </td>
 
                           <td style={{ padding: 10, textAlign: "right" }} data-purchase-cost-cell="true">
-                            {yen(sale.unit_cost)}
+                            {yen(sale.total_cost)}
                           </td>
 
                           <td style={{ padding: 10 }}>
