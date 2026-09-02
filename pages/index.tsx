@@ -34,3 +34,5 @@ export default function Home() {
     </>
   );
 }
+
+// Keep the entrypoint intentionally thin; feature logic lives in dedicated components.
