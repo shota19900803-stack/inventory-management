@@ -5,7 +5,7 @@ import { PREFECTURES, CARRIERS, findRegion, type ShippingRateCard, SAGAWA, YUPAC
 
 const SERVICE_OPTIONS: Record<string, string[]> = {
   "佐川急便": ["飛脚宅配便"],
-  "郵便局": ["ゆうパック"],
+  "郵便局": ["ゆうパック", "レターパック"],
   "クロネコヤマト": [...YAMATO_SERVICES],
 };
 const SIZE_OPTIONS: Record<string, string[]> = {
@@ -42,6 +42,8 @@ function saveSize(carrier: string, size: string) {
 }
 
 function fallbackAmount(carrier: string, service: string, prefecture: string, size: string): number {
+  if (carrier === "郵便局" && service === "レターパック") return 600;
+
   const region = findRegion(prefecture, carrier);
   if (!region) return 0;
   if (carrier === "佐川急便") {
@@ -157,7 +159,7 @@ function SalesShippingPanel({ target }: Props) {
 
   const dbCard = useMemo(() => cards.find((c) => c.carrier === carrier && c.service === service && c.region === region) ?? null, [cards, carrier, service, region]);
   const dbAmount = Number(dbCard?.rates[size] ?? dbCard?.rates.default ?? 0);
-  const autoAmount = dbAmount > 0 ? dbAmount : fallbackAmount(carrier, service, prefecture, size);
+  const autoAmount = carrier === "郵便局" && service === "レターパック" ? 600 : (dbAmount > 0 ? dbAmount : fallbackAmount(carrier, service, prefecture, size));
   const amount = manualAmount === "" ? autoAmount : Number(manualAmount);
   const isCompact = carrier === "クロネコヤマト" && service === "宅急便コンパクト";
   const materialCost = isCompact ? YAMATO_COMPACT_BOX_COST : 0;
@@ -301,4 +303,13 @@ function SalesShippingPanel({ target }: Props) {
   );
 }
 
-const inputStyle: React.CSSProperties = { display: "block", width: "100%", boxSizing: "border-box", padding: 11, borderRadius: 10, border: "1px solid #cbd5e1", marginTop: 6, background: "#fff" };
+const inputStyle: React.CSSProperties = {
+  display: "block",
+  width: "100%",
+  boxSizing: "border-box",
+  padding: 12,
+  borderRadius: 12,
+  border: "1px solid #cbd5e1",
+  marginTop: 6,
+  background: "#fff",
+};
