@@ -18,7 +18,7 @@ import {
 
 const SERVICE_OPTIONS: Record<string, string[]> = {
   "佐川急便": ["飛脚宅配便"],
-  "郵便局": ["ゆうパック"],
+  "郵便局": ["ゆうパック", "レターパック"],
   "クロネコヤマト": [...YAMATO_SERVICES],
 };
 
@@ -28,6 +28,9 @@ const SIZE_OPTIONS: Record<string, string[]> = {
 };
 
 function fallbackAmount(carrier: string, service: string, prefecture: string, size: string): number {
+  // レターパックは全国一律600円。都道府県・サイズには依存しない。
+  if (carrier === "郵便局" && service === "レターパック") return 600;
+
   const region = findRegion(prefecture, carrier);
   if (!region) return 0;
 
@@ -95,7 +98,10 @@ export default function ShippingAutoCalculator() {
 
   const dbAmount = Number(dbCard?.rates[size] ?? dbCard?.rates.default ?? 0);
   const defaultAmount = fallbackAmount(carrier, service, prefecture, size);
-  const autoAmount = dbAmount > 0 ? dbAmount : defaultAmount;
+  // レターパックは設定DBに値があっても、指定の600円を優先する。
+  const autoAmount = carrier === "郵便局" && service === "レターパック"
+    ? 600
+    : (dbAmount > 0 ? dbAmount : defaultAmount);
   const amount = manualAmount === "" ? autoAmount : Number(manualAmount);
 
   const applyToSaleForm = () => {
