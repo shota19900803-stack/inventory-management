@@ -1098,9 +1098,15 @@ async function saveSale(
     saleForm.quantity || 0
   );
 
-  const shippingCost = Number(
-    saleForm.shipping_cost || 0
-  );
+  // 発送費パネルはDashboardのsaleFormとは別コンポーネントで管理している。
+  // 登録時点の自動計算額をDOMから取得し、register_saleへ直接渡して1回の登録で保存する。
+  const shippingPanel = typeof document !== "undefined"
+    ? document.querySelector("[data-sales-shipping-panel]") as HTMLElement | null
+    : null;
+  const panelShippingCost = shippingPanel?.getAttribute("data-shipping-cost");
+  const shippingCost = panelShippingCost != null && panelShippingCost !== ""
+    ? Number(panelShippingCost)
+    : Number(saleForm.shipping_cost || 0);
 
   if (
     unitPrice < 0 ||
@@ -1205,6 +1211,9 @@ async function saveSale(
 
           p_notes:
             saleForm.notes.trim() || null,
+
+          p_shipping_cost:
+            shippingCost,
         }
       );
 
@@ -1222,34 +1231,6 @@ async function saveSale(
         "売上登録に失敗しました。"
       );
       return;
-    }
-
-    // ==========================================
-    // 送料保存
-    // ==========================================
-    let saleId = data?.sale_id ?? data?.id ?? null;
-
-    if (!saleId) {
-      const { data: latestSale } = await supabase
-        .from("sales_history")
-        .select("id")
-        .eq("product_id", saleForm.product_id)
-        .eq("sale_date", saleForm.sale_date)
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      saleId = latestSale?.id ?? null;
-    }
-
-    if (saleId) {
-      const { error: shippingError } = await supabase.rpc("set_sale_shipping_cost", {
-        p_sale_id: saleId,
-        p_shipping_cost: shippingCost,
-      });
-      if (shippingError) {
-        setMessage(`送料の保存に失敗しました：${shippingError.message}`);
-        return;
-      }
     }
 
     // ==========================================

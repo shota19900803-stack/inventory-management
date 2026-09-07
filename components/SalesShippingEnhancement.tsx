@@ -282,7 +282,11 @@ function SalesShippingPanel({ target }: Props) {
   }, [target, amount, carrier, service, size, materialCost]);
 
   return createPortal(
-    <section data-sales-shipping-panel="true" style={{ marginTop: 18, padding: 18, borderRadius: 16, background: "#f0f9ff", border: "1px solid #bae6fd" }}>
+    <section
+      data-sales-shipping-panel="true"
+      data-shipping-cost={String(Math.max(0, Number(amount || 0)))}
+      style={{ marginTop: 18, padding: 18, borderRadius: 16, background: "#f0f9ff", border: "1px solid #bae6fd" }}
+    >
       <div style={{ fontSize: 13, fontWeight: 900, color: "#0369a1", letterSpacing: 1 }}>SHIPPING</div>
       <h3 style={{ margin: "4px 0 6px" }}>🚚 発送費</h3>
       <p style={{ margin: "0 0 14px", color: "#64748b", fontSize: 13 }}>配送先・配送会社・発送方法（必要な場合はサイズ）を選ぶだけで送料を自動計算します。</p>
