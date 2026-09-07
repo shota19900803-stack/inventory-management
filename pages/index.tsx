@@ -61,6 +61,7 @@ export default function Home() {
   useEffect(() => {
     let stopped = false;
     let observer: MutationObserver | null = null;
+    const supabase = supabaseBrowser;
 
     const hideLowStockCard = () => {
       if (stopped) return true;
@@ -100,9 +101,85 @@ export default function Home() {
       });
     };
 
+    // 商品一覧の「履歴」は、一覧ページ内に全履歴を展開するのではなく、
+    // 商品IDを正確に特定して商品別履歴ページへ移動する。
+    const bindProductHistoryButtons = () => {
+      if (stopped) return;
+      const main = document.querySelector("main");
+      if (!main) return;
+
+      const buttons = Array.from(main.querySelectorAll("button"));
+      buttons.forEach((button) => {
+        const text = (button.textContent || "").replace(/\s/g, "").trim();
+        if (text !== "履歴") return;
+        if (button.getAttribute("data-product-history-bound") === "true") return;
+
+        button.setAttribute("data-product-history-bound", "true");
+        button.addEventListener("click", async (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+
+          const row = button.closest("tr");
+          if (!row) return;
+
+          const cells = Array.from(row.querySelectorAll("td"));
+          const jan = (cells[1]?.textContent || "").replace(/\D/g, "");
+          const productName = (cells[0]?.querySelector("strong")?.textContent || "").trim();
+
+          button.disabled = true;
+          const originalText = button.textContent;
+          button.textContent = "読込中…";
+
+          try {
+            let productId: string | null = null;
+
+            // 商品一覧ではJANが2列目なので、まずJANで商品を特定する。
+            if (jan.length === 13) {
+              const { data, error } = await supabase
+                .from("products")
+                .select("id")
+                .eq("jan_code", jan)
+                .limit(1)
+                .maybeSingle();
+
+              if (error) throw error;
+              productId = data?.id ?? null;
+            }
+
+            // JANがない商品は商品名でフォールバックする。
+            if (!productId && productName) {
+              const { data, error } = await supabase
+                .from("products")
+                .select("id")
+                .eq("name", productName)
+                .limit(1)
+                .maybeSingle();
+
+              if (error) throw error;
+              productId = data?.id ?? null;
+            }
+
+            if (!productId) {
+              alert("この商品の履歴を開けませんでした。商品情報を確認してください。");
+              return;
+            }
+
+            window.location.href = `/product-history?productId=${encodeURIComponent(productId)}`;
+          } catch (error) {
+            console.error("商品履歴への移動に失敗:", error);
+            alert("商品履歴を開けませんでした。もう一度お試しください。");
+          } finally {
+            button.disabled = false;
+            button.textContent = originalText || "履歴";
+          }
+        });
+      });
+    };
+
     const run = () => {
       hideLowStockCard();
       hidePurchaseMarketCheck();
+      bindProductHistoryButtons();
     };
 
     run();
