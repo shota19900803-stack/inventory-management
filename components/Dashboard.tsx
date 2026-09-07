@@ -1945,9 +1945,23 @@ async function cancelSale(sale: any) {
                   <table
                     style={{
                       width: "100%",
-                      borderCollapse: "collapse",
-                    }}
-                  >
+                      minWidth: 1340,
+          tableLayout: "fixed",
+          borderCollapse: "collapse",
+        }}
+      >
+        <colgroup>
+          <col style={{ width: 95 }} />
+          <col style={{ width: 280 }} />
+          <col style={{ width: 95 }} />
+          <col style={{ width: 220 }} />
+          <col style={{ width: 65 }} />
+          <col style={{ width: 115 }} />
+          <col style={{ width: 135 }} />
+          <col style={{ width: 100 }} />
+          <col style={{ width: 115 }} />
+          <col style={{ width: 150 }} />
+        </colgroup>
                     <thead>
                       <tr>
                         <th style={{ textAlign: "left", padding: 10 }}>
@@ -3389,12 +3403,19 @@ async function cancelSale(sale: any) {
                             {sale.sale_date}
                           </td>
 
-                          <td style={{ padding: 10 }}>
-                            {productMap[
-                              sale.product_id
-                            ]?.name ??
-                              "商品不明"}
-                          </td>
+                          <td
+                  style={{
+                    padding: "8px 10px",
+                    maxWidth: 280,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    verticalAlign: "middle",
+                  }}
+                  title={productMap[sale.product_id]?.name ?? "商品不明"}
+                >
+                  {productMap[sale.product_id]?.name ?? "商品不明"}
+                </td>
 
                           <td style={{ padding: 10 }}>
                             {sale.sales_channel ||
