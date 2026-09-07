@@ -16,20 +16,13 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
+          import re
           p = Path('components/Dashboard.tsx')
           s = p.read_text()
 
-          old = '''                <table
-                  style={{
-                    width: "100%",
-                    borderCollapse:
-                      "collapse",
-                  }}
-                >'''
-          new = '''                <table
-                  style={{
-                    width: "100%",
-                    minWidth: 1340,
+          if 'minWidth: 1340' not in s:
+              pattern = r'(<table\s+style=\{\{\s*width:\s*"100%",\s*)borderCollapse:\s*"collapse",\s*\}\}\s*>'
+              replacement = r'''\1minWidth: 1340,
                     tableLayout: "fixed",
                     borderCollapse: "collapse",
                   }}
@@ -46,17 +39,14 @@ jobs:
                     <col style={{ width: 115 }} />
                     <col style={{ width: 150 }} />
                   </colgroup>'''
-          if old not in s:
-              raise SystemExit('recent sales table opening not found')
-          s = s.replace(old, new, 1)
+              s2, n = re.subn(pattern, replacement, s, count=1)
+              if n != 1:
+                  raise SystemExit('recent sales table opening not found')
+              s = s2
 
-          old = '''                          <td style={{ padding: 10 }}>
-                            {productMap[
-                              sale.product_id
-                            ]?.name ??
-                              "商品不明"}
-                          </td>'''
-          new = '''                          <td
+          if 'title={productMap[sale.product_id]?.name ?? "商品不明"}' not in s:
+              pattern = r'''<td style=\{\{ padding: 10 \}\}>\s*\{productMap\[\s*sale\.product_id\s*\]\?\.name \?\?\s*"商品不明"\}\s*</td>'''
+              replacement = '''<td
                             style={{
                               padding: "8px 10px",
                               maxWidth: 280,
@@ -69,9 +59,10 @@ jobs:
                           >
                             {productMap[sale.product_id]?.name ?? "商品不明"}
                           </td>'''
-          if old not in s:
-              raise SystemExit('recent sales product cell not found')
-          s = s.replace(old, new, 1)
+              s2, n = re.subn(pattern, replacement, s, count=1)
+              if n != 1:
+                  raise SystemExit('recent sales product cell not found')
+              s = s2
 
           p.write_text(s)
           PY
@@ -79,9 +70,10 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add components/Dashboard.tsx
-          git diff --cached --quiet && exit 0
-          git commit -m "fix: make recent sales table easier to scan"
-          git push
+          if ! git diff --cached --quiet; then
+            git commit -m "fix: make recent sales table easier to scan"
+            git push
+          fi
 
       - name: Remove temporary workflow
         run: |
