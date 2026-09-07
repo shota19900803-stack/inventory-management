@@ -1254,6 +1254,7 @@ async function saveSale(
       total_sales: Number(data.total_sales ?? unitPrice * quantity),
       total_cost: Number(data.total_cost ?? Number(data.unit_cost ?? unitCost) * quantity),
       gross_profit: Number(data.gross_profit ?? ((unitPrice - Number(data.unit_cost ?? unitCost)) * quantity)),
+      shipping_cost: shippingCost,
       notes: saleForm.notes.trim() || null,
       is_cancelled: false,
       created_at: new Date().toISOString(),
