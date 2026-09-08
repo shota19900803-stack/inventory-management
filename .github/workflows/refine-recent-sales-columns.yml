@@ -61,32 +61,24 @@ jobs:
               section = section.replace('minWidth: 1340,', 'minWidth: 1240,', 1)
 
           # Date: 2026-09-08 -> 26/09/08.
-          old_date = '''<td style={{ padding: 10 }}>
-                            {sale.sale_date}
-                          </td>'''
-          new_date = '''<td style={{ padding: "8px 10px", whiteSpace: "nowrap" }}>
-                            {String(sale.sale_date ?? "").slice(2).replace(/-/g, "/")}
-                          </td>'''
-          if old_date in section:
-              section = section.replace(old_date, new_date, 1)
+          if '{sale.sale_date}' in section:
+              section = section.replace('{sale.sale_date}', '{String(sale.sale_date ?? "").slice(2).replace(/-/g, "/")}', 1)
           elif 'String(sale.sale_date ?? "").slice(2).replace' not in section:
               raise SystemExit('recent sales date cell not found')
+          section = section.replace('<td style={{ padding: 10 }}>\n                            {String(sale.sale_date ?? "").slice(2).replace(/-/g, "/")}', '<td style={{ padding: "8px 10px", whiteSpace: "nowrap" }}>\n                            {String(sale.sale_date ?? "").slice(2).replace(/-/g, "/")}', 1)
 
           # Shorten common sales channels.
-          old_channel = '''<td style={{ padding: 10 }}>
-                            {sale.sales_channel ||
-                              "—"}
-                          </td>'''
-          new_channel = '''<td style={{ padding: "8px 10px", textAlign: "center", whiteSpace: "nowrap" }}>
-                            {{
+          old_channel_expr = '''{sale.sales_channel ||
+                              "—"}'''
+          new_channel_expr = '''{{
                               "楽天市場": "楽天",
                               "Amazon": "アマ",
                               "Yahoo!ショッピング": "ﾔﾌｼｮ",
                               "メルカリ": "ﾒﾙｶﾘ",
-                            }[sale.sales_channel || ""] ?? sale.sales_channel || "—"}
-                          </td>'''
-          if old_channel in section:
-              section = section.replace(old_channel, new_channel, 1)
+                            }[sale.sales_channel || ""] ?? sale.sales_channel || "—"}'''
+          if old_channel_expr in section:
+              section = section.replace(old_channel_expr, new_channel_expr, 1)
+              section = section.replace('<td style={{ padding: 10 }}>\n                            {{', '<td style={{ padding: "8px 10px", textAlign: "center", whiteSpace: "nowrap" }}>\n                            {{', 1)
           elif '"楽天市場": "楽天"' not in section:
               raise SystemExit('recent sales channel cell not found')
 
