@@ -16,14 +16,14 @@ export default function MarketplacePdfImporter() {
   const [platform, setPlatform] = useState(""); const [busy, setBusy] = useState(false); const [message, setMessage] = useState("");
 
   async function analyze() {
-    if (!file) return; setBusy(true); setMessage(""); setEntries([]);
+    if (!file) return; setBusy(true); setMessage(""); setEntries([]); setPlatform("");
     try {
       const form = new FormData(); form.append("file", file);
       const response = await fetch("/api/accounting/import-marketplace-pdf", { method: "POST", body: form });
       const data = await response.json(); if (!response.ok) throw new Error(data.error || "PDFを解析できませんでした。");
       setPlatform(data.platform || ""); setEntries((data.entries || []) as Entry[]);
       setMessage(data.entries?.length ? `${data.entries.length}件を読み取りました。登録前に確認してください。` : "費用明細を見つけられませんでした。");
-    } catch (error) { setMessage(error instanceof Error ? error.message : "PDFの解析に失敗しました。"); }
+    } catch (error) { setPlatform(""); setMessage(error instanceof Error ? error.message : "PDFの解析に失敗しました。"); }
     finally { setBusy(false); }
   }
 
@@ -37,7 +37,7 @@ export default function MarketplacePdfImporter() {
       if (existingError) throw existingError;
       if ((existing || []).length > 0) { setMessage("このPDFはすでに登録済みです。二重計上を防止しました。"); return; }
       const { error } = await supabase.from("marketplace_cost_entries").insert(entries); if (error) throw error;
-      setMessage(`${entries.length}件を経理データへ登録しました。`); setEntries([]); setFile(null);
+      setMessage(`${entries.length}件を経理データへ登録しました。`); setEntries([]); setFile(null); setPlatform("");
       const input = document.getElementById("marketplace-pdf-input") as HTMLInputElement | null; if (input) input.value = "";
     } catch (error) { setMessage(error instanceof Error ? error.message : "登録に失敗しました。"); }
     finally { setBusy(false); }
@@ -52,7 +52,7 @@ export default function MarketplacePdfImporter() {
           <div><div style={{ fontSize: 12, letterSpacing: 1.5, color: "#6b7280", fontWeight: 800 }}>AUTO ACCOUNTING</div><h2 style={{ margin: "4px 0 5px" }}>📄 モール請求書を自動経理</h2><p style={{ margin: 0, color: "#6b7280" }}>楽天・AmazonのPDFから費目・発生月・請求月を読み取り、確認してから登録します。</p></div>
           <button type="button" onClick={() => setOpen(false)} style={{ border: 0, background: "#f3f4f6", borderRadius: 10, padding: "8px 12px", cursor: "pointer", fontWeight: 800 }}>閉じる</button>
         </div>
-        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 16 }}><input id="marketplace-pdf-input" type="file" accept="application/pdf,.pdf" onChange={(e) => setFile(e.target.files?.[0] || null)} /><button type="button" onClick={analyze} disabled={!file || busy} style={{ border: 0, borderRadius: 10, padding: "10px 16px", background: "#111827", color: "#fff", fontWeight: 800, opacity: !file || busy ? 0.55 : 1 }}>{busy ? "読み取り中…" : "PDFを読み取る"}</button>{platform && <span style={{ fontWeight: 800 }}>{platform}</span>}</div>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 16 }}><input id="marketplace-pdf-input" type="file" accept="application/pdf,.pdf" onChange={(e) => { setFile(e.target.files?.[0] || null); setEntries([]); setPlatform(""); setMessage(""); }} /><button type="button" onClick={analyze} disabled={!file || busy} style={{ border: 0, borderRadius: 10, padding: "10px 16px", background: "#111827", color: "#fff", fontWeight: 800, opacity: !file || busy ? 0.55 : 1 }}>{busy ? "読み取り中…" : "PDFを読み取る"}</button>{platform && <span style={{ fontWeight: 800 }}>{platform}</span>}</div>
         {message && <div style={{ marginTop: 12, padding: "10px 13px", borderRadius: 10, background: "#f8fafc", color: "#374151" }}>{message}</div>}
         {isCalculationSheet && <div style={{ marginTop: 12, padding: "11px 13px", borderRadius: 10, background: "#fff7ed", border: "1px solid #fed7aa", color: "#9a3412", lineHeight: 1.6 }}>このPDFは「品目別請求計算書」です。費用の計算根拠を確認するために読み取れますが、店舗別内訳書と同じ費用を二重計上しないよう、経理登録はできません。経理登録には「店舗別内訳書」を使用してください。</div>}
         {entries.length > 0 && <>
