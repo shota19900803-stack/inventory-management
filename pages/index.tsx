@@ -101,8 +101,6 @@ export default function Home() {
       });
     };
 
-    // 商品一覧の「履歴」は、一覧ページ内に全履歴を展開するのではなく、
-    // 商品IDを正確に特定して商品別履歴ページへ移動する。
     const bindProductHistoryButtons = () => {
       if (stopped) return;
       const main = document.querySelector("main");
@@ -133,7 +131,6 @@ export default function Home() {
           try {
             let productId: string | null = null;
 
-            // 商品一覧ではJANが2列目なので、まずJANで商品を特定する。
             if (jan.length === 13) {
               const { data, error } = await supabase
                 .from("products")
@@ -146,7 +143,6 @@ export default function Home() {
               productId = data?.id ?? null;
             }
 
-            // JANがない商品は商品名でフォールバックする。
             if (!productId && productName) {
               const { data, error } = await supabase
                 .from("products")
@@ -201,6 +197,7 @@ export default function Home() {
       <SalesShippingEnhancement />
       <QuickActions />
       <a href="/stocktake" style={{ position: "fixed", left: "50%", bottom: 20, transform: "translateX(-50%)", zIndex: 1001, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "13px 22px", borderRadius: 999, background: "#111827", color: "#fff", textDecoration: "none", fontWeight: 900, boxShadow: "0 8px 24px rgba(17,24,39,.22)", whiteSpace: "nowrap" }}>📋 棚卸し</a>
+      <a href="/profit-analysis" style={{ position: "fixed", left: 20, bottom: 72, zIndex: 1000, display: "inline-flex", alignItems: "center", gap: 8, padding: "13px 18px", borderRadius: 999, background: "#166534", color: "#fff", textDecoration: "none", fontWeight: 800, boxShadow: "0 8px 24px rgba(17,24,39,.2)" }}>💹 実質粗利</a>
       <a href="/management" style={{ position: "fixed", left: 20, bottom: 20, zIndex: 1000, display: "inline-flex", alignItems: "center", gap: 8, padding: "13px 18px", borderRadius: 999, background: "#111827", color: "#fff", textDecoration: "none", fontWeight: 800, boxShadow: "0 8px 24px rgba(17,24,39,.2)" }}>📊 経営ダッシュボード</a>
       <a href="/accounting" style={{ position: "fixed", right: 20, bottom: 20, zIndex: 1000, display: "inline-flex", alignItems: "center", gap: 8, padding: "13px 18px", borderRadius: 999, background: "#111827", color: "#fff", textDecoration: "none", fontWeight: 800, boxShadow: "0 8px 24px rgba(17,24,39,.2)" }}>📒 経理・帳簿</a>
     </>
