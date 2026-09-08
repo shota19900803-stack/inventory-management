@@ -1,0 +1,65 @@
+name: Refine recent sales columns
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Refine recent sales columns
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          p = Path('components/Dashboard.tsx')
+          s = p.read_text()
+          marker = '<h2 style={{ margin: 0 }}>最近の売上</h2>'
+          start = s.find(marker)
+          if start < 0:
+              raise SystemExit('recent sales marker not found')
+          end = s.find('</section>', start)
+          if end < 0:
+              raise SystemExit('recent sales section end not found')
+          section = s[start:end]
+
+          # Compact the fixed columns: date / product / channel / order / qty / amounts / actions.
+          section, n = re.subn(r'<colgroup>.*?</colgroup>', '''<colgroup>\n          <col style={{ width: 95 }} />\n          <col style={{ width: 280 }} />\n          <col style={{ width: 75 }} />\n          <col style={{ width: 180 }} />\n          <col style={{ width: 55 }} />\n          <col style={{ width: 105 }} />\n          <col style={{ width: 125 }} />\n          <col style={{ width: 90 }} />\n          <col style={{ width: 105 }} />\n          <col style={{ width: 130 }} />\n        </colgroup>''', section, count=1, flags=re.S)
+          if n != 1:
+              raise SystemExit('recent sales colgroup not found')
+          section = section.replace('minWidth: 1340,', 'minWidth: 1240,', 1)
+
+          # Date: 2026-09-08 -> 26/09/08 and keep it on one line.
+          section, n = re.subn(r'<td style=\{\{ padding: 10 \}\}>\s*\{sale\.sale_date\}\s*</td>', '''<td style={{ padding: "8px 10px", whiteSpace: "nowrap" }}>\n                            {String(sale.sale_date ?? "").replace(/^20(\\d{2})-(\\d{2})-(\\d{2}).*$/, "$1/$2/$3")}\n                          </td>''', section, count=1)
+          if n != 1:
+              raise SystemExit('recent sales date cell not found')
+
+          # Sales channel: shorten common marketplace labels.
+          section, n = re.subn(r'<td style=\{\{ padding: 10 \}\}>\s*\{sale\.sales_channel \|\|\s*"—"\}\s*</td>', '''<td style={{ padding: "8px 10px", textAlign: "center", whiteSpace: "nowrap" }}>\n                            {{\n                              "楽天市場": "楽天",\n                              "Amazon": "アマ",\n                              "Yahoo!ショッピング": "ﾔﾌｼｮ",\n                              "メルカリ": "ﾒﾙｶﾘ",\n                            }[sale.sales_channel || ""] ?? sale.sales_channel || "—"}\n                          </td>''', section, count=1)
+          if n != 1:
+              raise SystemExit('recent sales channel cell not found')
+
+          s = s[:start] + section + s[end:]
+          p.write_text(s)
+          PY
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add components/Dashboard.tsx
+          if ! git diff --cached --quiet; then
+            git commit -m "fix: compact recent sales date channel and order columns"
+            git push
+          fi
+
+      - name: Remove temporary workflow
+        run: |
+          git rm -f .github/workflows/refine-recent-sales-columns.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore: remove temporary recent sales workflow"
+          git push
