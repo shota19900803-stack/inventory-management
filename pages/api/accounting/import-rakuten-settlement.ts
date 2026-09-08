@@ -4,78 +4,57 @@ import crypto from "crypto";
 export const config = { api: { bodyParser: false, responseLimit: "8mb" } };
 
 type Settlement = {
-  platform: "楽天市場";
-  document_type: "楽天精算・振込明細";
-  source_hash: string;
-  source_filename: string;
-  settlement_date: string | null;
-  payment_period_start: string | null;
-  payment_period_end: string | null;
-  payment_calculation_amount: number;
-  billing_cutoff_date: string | null;
-  billing_calculation_amount: number;
-  net_transfer_amount: number;
-  status: "予定" | "確定";
+  platform: "楽天市場"; document_type: "楽天精算・振込明細"; source_hash: string; source_filename: string;
+  settlement_date: string | null; payment_period_start: string | null; payment_period_end: string | null;
+  payment_calculation_amount: number; billing_cutoff_date: string | null; billing_calculation_amount: number;
+  net_transfer_amount: number; status: "予定" | "確定";
 };
 
 function readMultipart(req: NextApiRequest): Promise<{ filename: string; buffer: Buffer }> {
   return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    let filename = "uploaded.pdf";
+    const chunks: Buffer[] = []; let filename = "uploaded.pdf";
     req.on("data", (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
     req.on("end", () => {
-      const body = Buffer.concat(chunks);
-      const header = body.subarray(0, Math.min(body.length, 8192)).toString("latin1");
-      const match = header.match(/filename="([^"]+)"/i);
-      if (match) filename = Buffer.from(match[1], "latin1").toString("utf8");
-      const marker = Buffer.from("\r\n\r\n");
-      const start = body.indexOf(marker);
-      const end = start >= 0 ? body.indexOf(Buffer.from("\r\n--"), start + marker.length) : -1;
+      const body = Buffer.concat(chunks); const header = body.subarray(0, Math.min(body.length, 8192)).toString("latin1");
+      const match = header.match(/filename="([^"]+)"/i); if (match) filename = Buffer.from(match[1], "latin1").toString("utf8");
+      const marker = Buffer.from("\r\n\r\n"); const start = body.indexOf(marker); const end = start >= 0 ? body.indexOf(Buffer.from("\r\n--"), start + marker.length) : -1;
       if (start < 0 || end < 0) return reject(new Error("PDFファイルを読み取れませんでした。"));
       resolve({ filename, buffer: body.subarray(start + marker.length, end) });
-    });
-    req.on("error", reject);
+    }); req.on("error", reject);
   });
 }
-
 const money = (value: string) => Number(value.replace(/[\\¥￥,\s]/g, ""));
-const jpDate = (value?: string | null) => {
-  const m = value?.match(/(\d{4})年\s*(\d{1,2})月\s*(\d{1,2})日/);
-  return m ? `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}` : null;
-};
+const jpDate = (value?: string | null) => { const m = value?.match(/(\d{4})年\s*(\d{1,2})月\s*(\d{1,2})日/); return m ? `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}` : null; };
 
 function parseSettlement(text: string, filename: string, hash: string): Settlement | null {
   const source = text.normalize("NFKC").replace(/[\u00a0\u3000]+/g, " ").replace(/\s+/g, " ");
-  const looksSettlement = /総合精算書|支払通知書|楽天からの支払計算額|楽天からの請求計算額|精算日/.test(source);
-  if (!looksSettlement) return null;
+  if (!/総合精算書|支払通知書|楽天からの支払計算額|楽天からの請求計算額|精算日/.test(source)) return null;
 
   const settlementDate = jpDate((source.match(/(\d{4}年\s*\d{1,2}月\s*\d{1,2}日)\s*(?:振込予定|精算日)/) || [])[1]);
   const period = source.match(/(\d{4}年\s*\d{1,2}月\s*\d{1,2}日)\s*[～~\-–]\s*(\d{4}年\s*\d{1,2}月\s*\d{1,2}日)\s*決済確定分/);
-  const paymentPeriodStart = jpDate(period?.[1]);
-  const paymentPeriodEnd = jpDate(period?.[2]);
+  const paymentPeriodStart = jpDate(period?.[1]); const paymentPeriodEnd = jpDate(period?.[2]);
 
-  // Rakuten's PDF labels the money coming to the shop as 「支払」.
-  // Depending on the PDF text extraction, the amount may appear as ¥3,774,746 or 3,774,746円.
-  const paymentMatch = source.match(/楽天からの支払計算額[\s\S]{0,220}?(?:[\\¥￥]\s*)?([\d,]+)\s*(?:円)?/);
-  const billingMatch = source.match(/楽天からの請求計算額[\s\S]{0,220}?(?:[\\¥￥]\s*)?([\d,]+)\s*(?:円)?/);
+  // 楽天の総合精算書では「支払」が楽天→店舗の金額を意味します。
+  // PDF抽出では「楽天からの支払計算額」ではなく、単に「支払 ¥3,774,746」となる場合があります。
+  const labeledPayment = source.match(/楽天からの支払計算額[\s\S]{0,220}?(?:[\\¥￥]\s*)?([\d,]+)\s*(?:円)?/);
+  const generalPayment = source.match(/(?:^|[\s　])支払\s*(?:[\\¥￥]\s*)?([\d,]+)\s*(?:円)?/);
+  const paymentMatch = labeledPayment || generalPayment;
+
+  const labeledBilling = source.match(/楽天からの請求計算額[\s\S]{0,220}?(?:[\\¥￥]\s*)?([\d,]+)\s*(?:円)?/);
+  const generalBilling = source.match(/(?:^|[\s　])請求\s*(?:[\\¥￥]\s*)?([\d,]+)\s*(?:円)?/);
+  const billingMatch = labeledBilling || generalBilling;
+
   const cutoffMatch = source.match(/(\d{4}年\s*\d{1,2}月\s*\d{1,2}日)\s*締分/);
   const paymentAmount = paymentMatch ? money(paymentMatch[1]) : 0;
   const billingAmount = billingMatch ? money(billingMatch[1]) : 0;
   const netTransfer = paymentAmount - billingAmount;
-
   if (!settlementDate && paymentAmount === 0 && billingAmount === 0) return null;
+
   return {
-    platform: "楽天市場",
-    document_type: "楽天精算・振込明細",
-    source_hash: hash,
-    source_filename: filename,
-    settlement_date: settlementDate,
-    payment_period_start: paymentPeriodStart,
-    payment_period_end: paymentPeriodEnd,
-    payment_calculation_amount: paymentAmount,
-    billing_cutoff_date: jpDate(cutoffMatch?.[1]),
-    billing_calculation_amount: billingAmount,
-    net_transfer_amount: netTransfer,
+    platform: "楽天市場", document_type: "楽天精算・振込明細", source_hash: hash, source_filename: filename,
+    settlement_date: settlementDate, payment_period_start: paymentPeriodStart, payment_period_end: paymentPeriodEnd,
+    payment_calculation_amount: paymentAmount, billing_cutoff_date: jpDate(cutoffMatch?.[1]),
+    billing_calculation_amount: billingAmount, net_transfer_amount: netTransfer,
     status: settlementDate ? "予定" : "確定",
   };
 }
