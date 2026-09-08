@@ -59,14 +59,11 @@ function parseRakutenCalculation(text: string, filename: string, hash: string): 
   ];
   targets.forEach(({ label, type }) => {
     const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    // In this calculation sheet the actual fee is the second currency amount
-    // on the "合計" row of the relevant section. Use that row rather than
-    // the worked-example amounts printed later in the document.
-    const re = new RegExp(`${escaped}[^]*?（(\\d{1,2})月分）[^]*?合計\\s*\\\\[\\d,]+\\s*\\\\([\\d,]+)", "g");
+    const re = new RegExp(`${escaped}[\\s\\S]*?（(\\d{1,2})月分）[\\s\\S]*?合計\\s*\\\\[\\d,]+\\s*\\\\[\\d,]+`, "g");
     let match: RegExpExecArray | null; let index = 0;
     while ((match = re.exec(source))) {
       const section = match[0];
-      const amountMatch = section.match(/合計\s*\\[\d,]+\s*\\([\d,]+)\s*$/);
+      const amountMatch = section.match(/合計\s*\\[\d,]+\s*\\[\d,]+/);
       if (!amountMatch) continue;
       const pair = amountMatch[0].match(/\\[\d,]+/g) || [];
       if (pair.length < 2) continue;
@@ -74,7 +71,7 @@ function parseRakutenCalculation(text: string, filename: string, hash: string): 
       const expense = invoice ? `${invoice.slice(0, 4)}-${match[1].padStart(2, "0")}-01` : null;
       if (!Number.isFinite(amount) || amount === 0) continue;
       const tax = Math.round(amount * 0.1);
-      entries.push({ platform: "楽天市場", document_type: "品目別請求計算書", invoice_date: invoice, expense_month: expense, billing_month: month(invoice), fee_type: type, description: `${label}（${match[1]}月分）`, amount, tax_amount: tax, total_amount: amount + tax, category: "販売関連費", status: "確定", source_filename: filename, source_hash: hash, source_line_key: `calculation:${label}:${match.index}:${index++}`, raw_text: match[0].slice(-500) });
+      entries.push({ platform: "楽天市場", document_type: "品目別請求計算書", invoice_date: invoice, expense_month: expense, billing_month: month(invoice), fee_type: type, description: `${label}（${match[1]}月分）`, amount, tax_amount: tax, total_amount: amount + tax, category: "販売関連費", status: "確定", source_filename: filename, source_hash: hash, source_line_key: `calculation:${label}:${match.index}:${index++}`, raw_text: section.slice(-500) });
     }
   });
   return entries;
