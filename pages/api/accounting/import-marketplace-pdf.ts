@@ -63,41 +63,20 @@ function parseRakutenCalculation(text: string, filename: string, hash: string): 
     while (cursor < source.length) {
       const labelIndex = source.indexOf(label, cursor);
       if (labelIndex < 0) break;
-
-      // In this Rakuten PDF the section title appears AFTER the summary table.
-      // Therefore the actual fee is the last two yen amounts immediately before the title:
-      // e.g. "\\1,183,778  \\45,513". The second amount is the fee.
       const before = source.slice(Math.max(0, labelIndex - 2500), labelIndex);
-      const pairs = [...before.matchAll(/[\\¥￥]\s*([\d,]+)\s+[\\¥￥]\s*([\d,]+)/g)];
+      // Rakuten's PDF places the section title after the summary table. The last
+      // pair of yen-prefixed, comma-grouped values before that title is the
+      // monthly sales/fee pair; the second value is the actual fee.
+      const pairs = [...before.matchAll(/[\\¥￥]\s*(\d{1,3}(?:,[\d]{3})+)\s+[\\¥￥]\s*(\d{1,3}(?:,[\d]{3})+)/g)];
       const pair = pairs[pairs.length - 1];
-
-      // The billing period is printed immediately after the section title.
       const after = source.slice(labelIndex, labelIndex + 160);
       const periodMatch = after.match(/（\s*(\d{1,2})\s*月分\s*）/);
-
       if (pair && periodMatch) {
         const amount = money(pair[2]);
         const expense = invoice ? `${invoice.slice(0, 4)}-${periodMatch[1].padStart(2, "0")}-01` : null;
         if (Number.isFinite(amount) && amount !== 0) {
           const tax = Math.round(amount * 0.1);
-          entries.push({
-            platform: "楽天市場",
-            document_type: "品目別請求計算書",
-            invoice_date: invoice,
-            expense_month: expense,
-            billing_month: month(invoice),
-            fee_type: type,
-            description: `${label}（${periodMatch[1]}月分）`,
-            amount,
-            tax_amount: tax,
-            total_amount: amount + tax,
-            category: "販売関連費",
-            status: "確定",
-            source_filename: filename,
-            source_hash: hash,
-            source_line_key: `calculation:${label}:${labelIndex}`,
-            raw_text: source.slice(Math.max(0, labelIndex - 350), labelIndex + 180),
-          });
+          entries.push({ platform: "楽天市場", document_type: "品目別請求計算書", invoice_date: invoice, expense_month: expense, billing_month: month(invoice), fee_type: type, description: `${label}（${periodMatch[1]}月分）`, amount, tax_amount: tax, total_amount: amount + tax, category: "販売関連費", status: "確定", source_filename: filename, source_hash: hash, source_line_key: `calculation:${label}:${labelIndex}`, raw_text: source.slice(Math.max(0, labelIndex - 350), labelIndex + 180) });
         }
       }
       cursor = labelIndex + label.length;
