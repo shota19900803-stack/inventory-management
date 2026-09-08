@@ -18,7 +18,7 @@ function readMultipart(req: NextApiRequest): Promise<{ filename: string; buffer:
   });
 }
 function money(value: string) { return Number(value.replace(/[\\¥￥,\s]/g, "")); }
-function isoDate(value?: string) { const m = value?.match(/(\d{4})\/(\d{1,2})\/(\d{1,2})/); return m ? `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}` : null; }
+function isoDate(value?: string) { const m = value?.match(/(\d{4})\s*[\/-]\s*(\d{1,2})\s*[\/-]\s*(\d{1,2})/); return m ? `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}` : null; }
 function month(value: string | null) { return value ? `${value.slice(0, 7)}-01` : null; }
 
 const RAKUTEN_FEES = [
@@ -30,17 +30,20 @@ function rakutenFeeType(d: string) {
 
 function parseRakuten(text: string, filename: string, hash: string): Entry[] {
   const normalized = text.replace(/[\u00a0\u3000]+/g, " ").replace(/\s+/g, " ");
-  const invoice = isoDate(normalized.match(/発行日\s*[:：]?\s*(\d{4}\/\d{1,2}\/\d{1,2})/)?.[1]);
+  // The issue date is the billing-month anchor for the uploaded Rakuten bill.
+  // Keep this intentionally tolerant because PDF text extraction may insert spaces/newlines or use full-width punctuation.
+  const invoiceMatch = normalized.match(/発行日\s*[:：]?\s*(\d{4})\s*[\/-]\s*(\d{1,2})\s*[\/-]\s*(\d{1,2})/);
+  const invoice = invoiceMatch ? `${invoiceMatch[1]}-${invoiceMatch[2].padStart(2, "0")}-${invoiceMatch[3].padStart(2, "0")}` : null;
+  const billingMonth = month(invoice);
   const entries: Entry[] = [];
   RAKUTEN_FEES.forEach((fee) => {
     const escaped = fee.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    // Rakuten PDFs may extract the aggregate category code directly after the amount (e.g. 45,44220).
     const re = new RegExp(`${escaped}\\s*(\\d{4}\\/\\d{1,2}\\/\\d{1,2})\\s*(?:～|-)?\\s*(\\d{4}\\/\\d{1,2}\\/\\d{1,2})\\s*\\\\?\\s*(-?[\\d,]+?)\\s*(?:10|20|30|40|50|60|99)(?:\\s|～|$)`, "g");
     let match: RegExpExecArray | null; let index = 0;
     while ((match = re.exec(normalized))) {
       const start = isoDate(match[1]); const amount = money(match[3]); if (!start || !Number.isFinite(amount) || amount === 0) continue;
       const nonTaxable = fee.includes("ﾎﾟｲﾝﾄ付与料"); const tax = nonTaxable ? null : Math.round(amount * 0.1);
-      entries.push({ platform: "楽天市場", document_type: "店舗別内訳書", invoice_date: invoice, expense_month: month(start), billing_month: month(invoice), fee_type: rakutenFeeType(fee), description: fee, amount, tax_amount: tax, total_amount: tax == null ? amount : amount + tax, category: "販売関連費", status: "確定", source_filename: filename, source_hash: hash, source_line_key: `${fee}:${match.index}:${index++}`, raw_text: match[0] });
+      entries.push({ platform: "楽天市場", document_type: "店舗別内訳書", invoice_date: invoice, expense_month: month(start), billing_month: billingMonth, fee_type: rakutenFeeType(fee), description: fee, amount, tax_amount: tax, total_amount: tax == null ? amount : amount + tax, category: "販売関連費", status: "確定", source_filename: filename, source_hash: hash, source_line_key: `${fee}:${match.index}:${index++}`, raw_text: match[0] });
     }
   });
   return entries;
