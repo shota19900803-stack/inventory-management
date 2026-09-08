@@ -17,7 +17,7 @@ if (source.includes(broken)) {
 
 // 「今月の売上履歴」は実際には6列（日付・商品・販売先・売上・粗利・操作）なのに、
 // 以前の10列分のcolgroupが残っていたため右側に大きな余白が発生していた。
-// ビルド時に6列へ正規化し、商品名は最大2行で収める。
+// 6列をカード幅いっぱいに配分する。
 const oldColgroup = `<colgroup>
           <col style={{ width: 95 }} />
           <col style={{ width: 280 }} />
@@ -32,18 +32,33 @@ const oldColgroup = `<colgroup>
         </colgroup>`;
 
 const newColgroup = `<colgroup>
-          <col style={{ width: 110 }} />
-          <col style={{ width: 1 }} />
-          <col style={{ width: 135 }} />
-          <col style={{ width: 120 }} />
-          <col style={{ width: 120 }} />
-          <col style={{ width: 155 }} />
+          <col style={{ width: "10%" }} />
+          <col style={{ width: "42%" }} />
+          <col style={{ width: "13%" }} />
+          <col style={{ width: "12%" }} />
+          <col style={{ width: "10%" }} />
+          <col style={{ width: "13%" }} />
         </colgroup>`;
 
 if (source.includes(oldColgroup)) {
   source = source.replace(oldColgroup, newColgroup);
   changed = true;
   console.log('Normalized Dashboard.tsx recent-sales table to 6 columns.');
+}
+
+// すでに6列へ変換済みの版がある場合も、商品列を十分に確保する。
+const oldPercentColgroup = `<colgroup>
+          <col style={{ width: "10%" }} />
+          <col style={{ width: "1%" }} />
+          <col style={{ width: "13%" }} />
+          <col style={{ width: "12%" }} />
+          <col style={{ width: "12%" }} />
+          <col style={{ width: "15%" }} />
+        </colgroup>`;
+if (source.includes(oldPercentColgroup)) {
+  source = source.replace(oldPercentColgroup, newColgroup);
+  changed = true;
+  console.log('Corrected recent-sales column proportions.');
 }
 
 // 商品列は幅を自動配分し、商品名を最大2行で表示する。
