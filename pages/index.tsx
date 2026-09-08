@@ -33,30 +33,6 @@ export default function Home() {
     let observer: MutationObserver | null = null;
     const supabase = supabaseBrowser;
 
-    // 古い「在庫不足商品」ブロックは、描画直後に非表示化する。
-    // 700msポーリングは廃止して、チラつきを最小化する。
-    const hideLowStockCard = () => {
-      if (stopped) return true;
-      const main = document.querySelector("main");
-      if (!main) return false;
-      for (const leaf of Array.from(main.querySelectorAll("*"))) {
-        if (leaf.children.length !== 0) continue;
-        const leafText = (leaf.textContent || "").replace(/\s/g, "");
-        if (!leafText.includes("在庫不足商品")) continue;
-        let node: HTMLElement | null = leaf.parentElement;
-        for (let depth = 0; node && depth < 12; depth += 1) {
-          const text = (node.textContent || "").replace(/\s/g, "");
-          if (text.includes("在庫管理") && /\d+件/.test(text)) {
-            node.style.display = "none";
-            node.setAttribute("data-low-stock-hidden", "true");
-            return true;
-          }
-          node = node.parentElement;
-        }
-      }
-      return false;
-    };
-
     const hidePurchaseMarketCheck = () => {
       if (stopped) return;
       const main = document.querySelector("main");
@@ -119,7 +95,6 @@ export default function Home() {
     };
 
     const run = () => {
-      hideLowStockCard();
       hidePurchaseMarketCheck();
       bindProductHistoryButtons();
     };
@@ -137,6 +112,11 @@ export default function Home() {
 
   return <><SafeBoundary><Dashboard/></SafeBoundary><ManagementSnapshot/><SalesShippingEnhancement/><QuickActions/>
     <style>{`
+      /* 月次集計の在庫管理カードは、在庫不足一覧を商品管理へ集約したため表示しない */
+      main > div > section:nth-of-type(2) > div:nth-child(5) {
+        display: none !important;
+      }
+
       /* 最近の売上：長い注文番号が売上金額へ食い込まないようにする */
       table:has([data-purchase-cost-header="true"]) th,
       table:has([data-purchase-cost-header="true"]) td {
