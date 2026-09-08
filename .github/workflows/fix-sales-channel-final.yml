@@ -1,0 +1,43 @@
+name: Final sales channel syntax repair
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Repair exact JSX block
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('components/Dashboard.tsx')
+          s = p.read_text()
+          start = s.find('                          <td style={{ padding: 10 }}>\n                            ({{')
+          if start < 0:
+              raise SystemExit('bad sales channel block not found')
+          end_marker = '                          </td>'
+          end = s.find(end_marker, start)
+          if end < 0:
+              raise SystemExit('sales channel td end not found')
+          end += len(end_marker)
+          new = '''                          <td style={{ padding: 10 }}>
+                            {({
+                              "楽天市場": "楽天",
+                              "Amazon": "アマ",
+                              "Yahoo!ショッピング": "ﾔﾌｼｮ",
+                              "メルカリ": "ﾒﾙｶﾘ",
+                            }[sale.sales_channel || ""] ?? (sale.sales_channel || "—"))}
+                          </td>'''
+          p.write_text(s[:start] + new + s[end:])
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add components/Dashboard.tsx
+          git commit -m 'fix: repair sales channel JSX syntax'
+          git push
