@@ -30,8 +30,6 @@ function rakutenFeeType(d: string) {
 
 function parseRakuten(text: string, filename: string, hash: string): Entry[] {
   const normalized = text.replace(/[\u00a0\u3000]+/g, " ").replace(/\s+/g, " ");
-  // The issue date is the billing-month anchor for the uploaded Rakuten bill.
-  // Keep this intentionally tolerant because PDF text extraction may insert spaces/newlines or use full-width punctuation.
   const invoiceMatch = normalized.match(/発行日\s*[:：]?\s*(\d{4})\s*[\/-]\s*(\d{1,2})\s*[\/-]\s*(\d{1,2})/);
   const invoice = invoiceMatch ? `${invoiceMatch[1]}-${invoiceMatch[2].padStart(2, "0")}-${invoiceMatch[3].padStart(2, "0")}` : null;
   const billingMonth = month(invoice);
@@ -44,6 +42,30 @@ function parseRakuten(text: string, filename: string, hash: string): Entry[] {
       const start = isoDate(match[1]); const amount = money(match[3]); if (!start || !Number.isFinite(amount) || amount === 0) continue;
       const nonTaxable = fee.includes("ﾎﾟｲﾝﾄ付与料"); const tax = nonTaxable ? null : Math.round(amount * 0.1);
       entries.push({ platform: "楽天市場", document_type: "店舗別内訳書", invoice_date: invoice, expense_month: month(start), billing_month: billingMonth, fee_type: rakutenFeeType(fee), description: fee, amount, tax_amount: tax, total_amount: tax == null ? amount : amount + tax, category: "販売関連費", status: "確定", source_filename: filename, source_hash: hash, source_line_key: `${fee}:${match.index}:${index++}`, raw_text: match[0] });
+    }
+  });
+  return entries;
+}
+
+function parseRakutenCalculation(text: string, filename: string, hash: string): Entry[] {
+  const normalized = text.replace(/[\u00a0\u3000]+/g, " ").replace(/\s+/g, " ");
+  const invoiceMatch = normalized.match(/発行日\s*[:：]?\s*(\d{4})\s*[\/-]\s*(\d{1,2})\s*[\/-]\s*(\d{1,2})/);
+  const invoice = invoiceMatch ? `${invoiceMatch[1]}-${invoiceMatch[2].padStart(2, "0")}-${invoiceMatch[3].padStart(2, "0")}` : null;
+  const entries: Entry[] = [];
+  const targets = [
+    { label: "ｼｽﾃﾑ利用料_PC", type: "システム利用料_PC" },
+    { label: "ｼｽﾃﾑ利用料_ﾓﾊﾞｲﾙ", type: "システム利用料_モバイル" },
+    { label: "ﾌﾟﾗﾝ共通_楽天ﾍﾟｲ利用料", type: "楽天ペイ利用料" },
+  ];
+  targets.forEach(({ label, type }) => {
+    const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp(`${escaped}[^\\n]{0,120}?（(\\d{1,2})月分）[^\\n]{0,500}?(?:合計\\s*)?\\\\?\\s*([\\d,]+)`, "g");
+    let match: RegExpExecArray | null; let index = 0;
+    while ((match = re.exec(normalized))) {
+      const expense = invoice ? `${invoice.slice(0, 4)}-${match[1].padStart(2, "0")}-01` : null;
+      const amount = money(match[2]); if (!Number.isFinite(amount) || amount === 0) continue;
+      const tax = Math.round(amount * 0.1);
+      entries.push({ platform: "楽天市場", document_type: "品目別請求計算書", invoice_date: invoice, expense_month: expense, billing_month: month(invoice), fee_type: type, description: `${label}（${match[1]}月分）`, amount, tax_amount: tax, total_amount: amount + tax, category: "販売関連費", status: "確定", source_filename: filename, source_hash: hash, source_line_key: `calculation:${label}:${match.index}:${index++}`, raw_text: match[0] });
     }
   });
   return entries;
@@ -74,9 +96,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const pdfParse = require("pdf-parse") as (input: Buffer) => Promise<{ text: string }>;
     const text = (await pdfParse(buffer)).text || ""; const normalized = text.normalize("NFKC");
-    const platform = /楽天市場|楽天ペイ|RPP|ｼｽﾃﾑ利用料_PC/.test(text) ? "楽天市場" : /Amazon手数料|フルフィルメント by Amazon|支払明細書/.test(normalized) ? "Amazon" : null;
+    const isRakutenCalculation = /品目別請求計算書/.test(text) && /ｼｽﾃﾑ利用料_PC|ｼｽﾃﾑ利用料_ﾓﾊﾞｲﾙ|楽天ﾍﾟｲ利用料/.test(text);
+    const platform = /楽天市場|楽天ペイ|RPP|ｼｽﾃﾑ利用料_PC|品目別請求計算書/.test(text) ? "楽天市場" : /Amazon手数料|フルフィルメント by Amazon|支払明細書/.test(normalized) ? "Amazon" : null;
     if (!platform) return res.status(400).json({ error: "楽天市場またはAmazonの帳票として判定できませんでした。" });
-    const entries = platform === "楽天市場" ? parseRakuten(text, filename, hash) : parseAmazon(normalized, filename, hash);
+    const entries = platform === "楽天市場" ? (isRakutenCalculation ? parseRakutenCalculation(text, filename, hash) : parseRakuten(text, filename, hash)) : parseAmazon(normalized, filename, hash);
+    if (!entries.length) return res.status(400).json({ error: isRakutenCalculation ? "楽天の品目別請求計算書は判定できましたが、費用額を抽出できませんでした。PDFの内容を確認してください。" : "費用明細を抽出できませんでした。PDFの種類を確認してください。" });
     return res.status(200).json({ platform, filename, hash, entries, textPreview: text.slice(0, 3000) });
   } catch (error) { console.error("marketplace PDF import error", error); return res.status(500).json({ error: error instanceof Error ? error.message : "PDFの解析に失敗しました。" }); }
 }
