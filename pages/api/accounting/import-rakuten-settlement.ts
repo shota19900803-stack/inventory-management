@@ -46,14 +46,18 @@ const jpDate = (value?: string | null) => {
 
 function parseSettlement(text: string, filename: string, hash: string): Settlement | null {
   const source = text.normalize("NFKC").replace(/[\u00a0\u3000]+/g, " ").replace(/\s+/g, " ");
-  if (!/(楽天からの振込額|楽天からの支払計算額|楽天からの請求計算額|振込予定)/.test(source)) return null;
+  const looksSettlement = /総合精算書|支払通知書|楽天からの支払計算額|楽天からの請求計算額|精算日/.test(source);
+  if (!looksSettlement) return null;
 
-  const settlementDate = jpDate((source.match(/(\d{4}年\s*\d{1,2}月\s*\d{1,2}日)\s*振込予定/) || [])[1]);
+  const settlementDate = jpDate((source.match(/(\d{4}年\s*\d{1,2}月\s*\d{1,2}日)\s*(?:振込予定|精算日)/) || [])[1]);
   const period = source.match(/(\d{4}年\s*\d{1,2}月\s*\d{1,2}日)\s*[～~\-–]\s*(\d{4}年\s*\d{1,2}月\s*\d{1,2}日)\s*決済確定分/);
   const paymentPeriodStart = jpDate(period?.[1]);
   const paymentPeriodEnd = jpDate(period?.[2]);
-  const paymentMatch = source.match(/楽天からの支払計算額[\s\S]{0,180}?([\d,]+)\s*円/);
-  const billingMatch = source.match(/楽天からの請求計算額[\s\S]{0,180}?([\d,]+)\s*円/);
+
+  // Rakuten's PDF labels the money coming to the shop as 「支払」.
+  // Depending on the PDF text extraction, the amount may appear as ¥3,774,746 or 3,774,746円.
+  const paymentMatch = source.match(/楽天からの支払計算額[\s\S]{0,220}?(?:[\\¥￥]\s*)?([\d,]+)\s*(?:円)?/);
+  const billingMatch = source.match(/楽天からの請求計算額[\s\S]{0,220}?(?:[\\¥￥]\s*)?([\d,]+)\s*(?:円)?/);
   const cutoffMatch = source.match(/(\d{4}年\s*\d{1,2}月\s*\d{1,2}日)\s*締分/);
   const paymentAmount = paymentMatch ? money(paymentMatch[1]) : 0;
   const billingAmount = billingMatch ? money(billingMatch[1]) : 0;
@@ -86,7 +90,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const pdfParse = require("pdf-parse") as (input: Buffer) => Promise<{ text: string }>;
     const text = (await pdfParse(buffer)).text || "";
     const settlement = parseSettlement(text, filename, hash);
-    if (!settlement) return res.status(400).json({ error: "楽天の精算・振込明細として判定できましたが、振込情報を抽出できませんでした。" });
+    if (!settlement) return res.status(400).json({ error: "楽天の精算・振込明細として判定できませんでした。" });
     return res.status(200).json({ settlement, textPreview: text.slice(0, 3000) });
   } catch (error) {
     console.error("rakuten settlement import error", error);
