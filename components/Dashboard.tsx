@@ -3357,12 +3357,25 @@ async function cancelSale(sale: any) {
                 }}
               >
                 <table
-                  style={{
-                    width: "100%",
-                    borderCollapse:
-                      "collapse",
-                  }}
-                >
+        style={{
+          width: "100%",
+          minWidth: 1240,
+          tableLayout: "fixed",
+          borderCollapse: "collapse",
+        }}
+      >
+        <colgroup>
+          <col style={{ width: 95 }} />
+          <col style={{ width: 280 }} />
+          <col style={{ width: 75 }} />
+          <col style={{ width: 180 }} />
+          <col style={{ width: 55 }} />
+          <col style={{ width: 105 }} />
+          <col style={{ width: 125 }} />
+          <col style={{ width: 90 }} />
+          <col style={{ width: 105 }} />
+          <col style={{ width: 130 }} />
+        </colgroup>
                   <thead>
                     <tr>
                       <th style={{ padding: 10 }}>
@@ -3400,7 +3413,7 @@ async function cancelSale(sale: any) {
                     {filteredRecentSales.map((sale) => (
                         <tr key={sale.id}>
                           <td style={{ padding: 10 }}>
-                            {sale.sale_date}
+                            {String(sale.sale_date ?? "").slice(2).replace(/-/g, "/")}
                           </td>
 
                           <td
@@ -3418,8 +3431,12 @@ async function cancelSale(sale: any) {
                 </td>
 
                           <td style={{ padding: 10 }}>
-                            {sale.sales_channel ||
-                              "—"}
+                            {{
+                    "楽天市場": "楽天",
+                    "Amazon": "アマ",
+                    "Yahoo!ショッピング": "ﾔﾌｼｮ",
+                    "メルカリ": "ﾒﾙｶﾘ",
+                  }[sale.sales_channel || ""] ?? sale.sales_channel || "—"}
                           </td>
 
                           <td style={{ padding: 10, whiteSpace: "nowrap" }}>
