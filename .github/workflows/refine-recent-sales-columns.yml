@@ -16,6 +16,7 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
+          import re
           p = Path('components/Dashboard.tsx')
           s = p.read_text()
           marker = '<h2 style={{ margin: 0 }}>最近の売上</h2>'
@@ -27,7 +28,6 @@ jobs:
               raise SystemExit('recent sales section end not found')
           section = s[start:end]
 
-          # Precisely target the table in the 最近の売上 section.
           table_pos = section.find('<table')
           if table_pos < 0:
               raise SystemExit('recent sales table not found')
@@ -61,25 +61,19 @@ jobs:
               section = section.replace('minWidth: 1340,', 'minWidth: 1240,', 1)
 
           # Date: 2026-09-08 -> 26/09/08.
-          if '{sale.sale_date}' in section:
-              section = section.replace('{sale.sale_date}', '{String(sale.sale_date ?? "").slice(2).replace(/-/g, "/")}', 1)
-          elif 'String(sale.sale_date ?? "").slice(2).replace' not in section:
+          section, n = re.subn(r'\{sale\.sale_date\}', '{String(sale.sale_date ?? "").slice(2).replace(/-/g, "/")}', section, count=1)
+          if n != 1 and 'String(sale.sale_date ?? "").slice(2).replace' not in section:
               raise SystemExit('recent sales date cell not found')
-          section = section.replace('<td style={{ padding: 10 }}>\n                            {String(sale.sale_date ?? "").slice(2).replace(/-/g, "/")}', '<td style={{ padding: "8px 10px", whiteSpace: "nowrap" }}>\n                            {String(sale.sale_date ?? "").slice(2).replace(/-/g, "/")}', 1)
 
           # Shorten common sales channels.
-          old_channel_expr = '''{sale.sales_channel ||
-                              "—"}'''
           new_channel_expr = '''{{
                               "楽天市場": "楽天",
                               "Amazon": "アマ",
                               "Yahoo!ショッピング": "ﾔﾌｼｮ",
                               "メルカリ": "ﾒﾙｶﾘ",
                             }[sale.sales_channel || ""] ?? sale.sales_channel || "—"}'''
-          if old_channel_expr in section:
-              section = section.replace(old_channel_expr, new_channel_expr, 1)
-              section = section.replace('<td style={{ padding: 10 }}>\n                            {{', '<td style={{ padding: "8px 10px", textAlign: "center", whiteSpace: "nowrap" }}>\n                            {{', 1)
-          elif '"楽天市場": "楽天"' not in section:
+          section, n = re.subn(r'\{sale\.sales_channel\s*\|\|\s*"—"\}', lambda m: new_channel_expr, section, count=1)
+          if n != 1 and '"楽天市場": "楽天"' not in section:
               raise SystemExit('recent sales channel cell not found')
 
           s = s[:start] + section + s[end:]
