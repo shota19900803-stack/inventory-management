@@ -3,11 +3,7 @@ import crypto from "crypto";
 
 export const config = { api: { bodyParser: false, responseLimit: "8mb" } };
 
-type Entry = {
-  platform: "楽天市場" | "Amazon"; document_type: string; invoice_date: string | null; expense_month: string | null; billing_month: string | null;
-  fee_type: string; description: string; amount: number; tax_amount: number | null; total_amount: number | null; category: string; status: "確定";
-  source_filename: string; source_hash: string; source_line_key: string; raw_text: string;
-};
+type Entry = { platform: "楽天市場" | "Amazon"; document_type: string; invoice_date: string | null; expense_month: string | null; billing_month: string | null; fee_type: string; description: string; amount: number; tax_amount: number | null; total_amount: number | null; category: string; status: "確定"; source_filename: string; source_hash: string; source_line_key: string; raw_text: string };
 
 function readMultipart(req: NextApiRequest): Promise<{ filename: string; buffer: Buffer }> {
   return new Promise((resolve, reject) => {
@@ -16,10 +12,8 @@ function readMultipart(req: NextApiRequest): Promise<{ filename: string; buffer:
     req.on("end", () => {
       const body = Buffer.concat(chunks); const header = body.subarray(0, Math.min(body.length, 8192)).toString("latin1");
       const match = header.match(/filename="([^"]+)"/i); if (match) filename = Buffer.from(match[1], "latin1").toString("utf8");
-      const marker = Buffer.from("\r\n\r\n"); const start = body.indexOf(marker); const endMarker = Buffer.from("\r\n--");
-      const end = start >= 0 ? body.indexOf(endMarker, start + marker.length) : -1;
-      if (start < 0 || end < 0) return reject(new Error("PDFファイルを読み取れませんでした。"));
-      resolve({ filename, buffer: body.subarray(start + marker.length, end) });
+      const marker = Buffer.from("\r\n\r\n"); const start = body.indexOf(marker); const end = start >= 0 ? body.indexOf(Buffer.from("\r\n--"), start + marker.length) : -1;
+      if (start < 0 || end < 0) return reject(new Error("PDFファイルを読み取れませんでした。")); resolve({ filename, buffer: body.subarray(start + marker.length, end) });
     }); req.on("error", reject);
   });
 }
@@ -28,16 +22,10 @@ function isoDate(value?: string) { const m = value?.match(/(\d{4})\/(\d{1,2})\/(
 function month(value: string | null) { return value ? `${value.slice(0, 7)}-01` : null; }
 
 const RAKUTEN_FEES = [
-  "ｼｽﾃﾑ利用料_PC", "ｼｽﾃﾑ利用料_ﾓﾊﾞｲﾙ", "ﾌﾟﾗﾝ共通_ﾓｰﾙにおける取引の安全性･利便性向上のためのｼｽﾃﾑ利用料",
-  "ｽｰﾊﾟｰｱﾌｨﾘｴｲﾄ_成果報酬原資", "ｽｰﾊﾟｰｱﾌｨﾘｴｲﾄ_ｱﾌｨﾘｴｲﾄｼｽﾃﾑ利用料", "ｽｰﾊﾟｰｱﾌｨﾘｴｲﾄ_ｱﾄﾞﾊﾞﾝｽｻｰﾋﾞｽ料", "ｽｰﾊﾟｰｱﾌｨﾘｴｲﾄ_ｱﾄﾞﾊﾞﾝｽｻｰﾋﾞｽ料【割引】",
-  "ﾌﾟﾗﾝ共通_楽天ﾍﾟｲ利用料", "検索連動型広告(RPP)_広告掲載料", "ｻｰﾋﾞｽｽｸｴｱ_compass for 楽天市場", "ﾌﾟﾗﾝ共通_ﾕｰｻﾞ返金_店舗様負担分",
-  "ﾌﾟﾗﾝ共通_ﾎﾟｲﾝﾄ付与料_PC", "ﾌﾟﾗﾝ共通_ﾎﾟｲﾝﾄ付与料_ﾓﾊﾞｲﾙ",
+  "ｼｽﾃﾑ利用料_PC", "ｼｽﾃﾑ利用料_ﾓﾊﾞｲﾙ", "ﾌﾟﾗﾝ共通_ﾓｰﾙにおける取引の安全性･利便性向上のためのｼｽﾃﾑ利用料", "ｽｰﾊﾟｰｱﾌｨﾘｴｲﾄ_成果報酬原資", "ｽｰﾊﾟｰｱﾌｨﾘｴｲﾄ_ｱﾌｨﾘｴｲﾄｼｽﾃﾑ利用料", "ｽｰﾊﾟｰｱﾌｨﾘｴｲﾄ_ｱﾄﾞﾊﾞﾝｽｻｰﾋﾞｽ料", "ｽｰﾊﾟｰｱﾌｨﾘｴｲﾄ_ｱﾄﾞﾊﾞﾝｽｻｰﾋﾞｽ料【割引】", "ﾌﾟﾗﾝ共通_楽天ﾍﾟｲ利用料", "検索連動型広告(RPP)_広告掲載料", "ｻｰﾋﾞｽｽｸｴｱ_compass for 楽天市場", "ﾌﾟﾗﾝ共通_ﾕｰｻﾞ返金_店舗様負担分", "ﾌﾟﾗﾝ共通_ﾎﾟｲﾝﾄ付与料_PC", "ﾌﾟﾗﾝ共通_ﾎﾟｲﾝﾄ付与料_ﾓﾊﾞｲﾙ",
 ];
 function rakutenFeeType(d: string) {
-  if (d.includes("RPP")) return "RPP広告"; if (d.includes("ｼｽﾃﾑ利用料_PC")) return "システム利用料_PC"; if (d.includes("ｼｽﾃﾑ利用料_ﾓﾊﾞｲﾙ")) return "システム利用料_モバイル";
-  if (d.includes("楽天ﾍﾟｲ利用料")) return "楽天ペイ利用料"; if (d.includes("成果報酬原資")) return "アフィリエイト成果報酬"; if (d.includes("ｱﾌｨﾘｴｲﾄｼｽﾃﾑ利用料")) return "アフィリエイトシステム利用料";
-  if (d.includes("ﾎﾟｲﾝﾄ付与料")) return "ポイント付与料"; if (d.includes("compass")) return "compass"; if (d.includes("安全性")) return "システム利用料（安全性・利便性）";
-  if (d.includes("ﾕｰｻﾞ返金")) return "ユーザー返金（店舗負担）"; return "楽天その他販売関連費";
+  if (d.includes("RPP")) return "RPP広告"; if (d.includes("ｼｽﾃﾑ利用料_PC")) return "システム利用料_PC"; if (d.includes("ｼｽﾃﾑ利用料_ﾓﾊﾞｲﾙ")) return "システム利用料_モバイル"; if (d.includes("楽天ﾍﾟｲ利用料")) return "楽天ペイ利用料"; if (d.includes("成果報酬原資")) return "アフィリエイト成果報酬"; if (d.includes("ｱﾌｨﾘｴｲﾄｼｽﾃﾑ利用料")) return "アフィリエイトシステム利用料"; if (d.includes("ﾎﾟｲﾝﾄ付与料")) return "ポイント付与料"; if (d.includes("compass")) return "compass"; if (d.includes("安全性")) return "システム利用料（安全性・利便性）"; if (d.includes("ﾕｰｻﾞ返金")) return "ユーザー返金（店舗負担）"; return "楽天その他販売関連費";
 }
 
 function parseRakuten(text: string, filename: string, hash: string): Entry[] {
@@ -46,13 +34,13 @@ function parseRakuten(text: string, filename: string, hash: string): Entry[] {
   const entries: Entry[] = [];
   RAKUTEN_FEES.forEach((fee) => {
     const escaped = fee.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const re = new RegExp(`${escaped}\\s*(\\d{4}\\/\\d{1,2}\\/\\d{1,2})\\s*(?:～|-)??\\s*(\\d{4}\\/\\d{1,2}\\/\\d{1,2})\\s*\\\\?\\s*(-?[\\d,]+)`, "g");
+    // Rakuten PDFs may extract the aggregate category code directly after the amount (e.g. 45,44220).
+    const re = new RegExp(`${escaped}\\s*(\\d{4}\\/\\d{1,2}\\/\\d{1,2})\\s*(?:～|-)?\\s*(\\d{4}\\/\\d{1,2}\\/\\d{1,2})\\s*\\\\?\\s*(-?[\\d,]+?)\\s*(?:10|20|30|40|50|60|99)(?:\\s|～|$)`, "g");
     let match: RegExpExecArray | null; let index = 0;
     while ((match = re.exec(normalized))) {
       const start = isoDate(match[1]); const amount = money(match[3]); if (!start || !Number.isFinite(amount) || amount === 0) continue;
       const nonTaxable = fee.includes("ﾎﾟｲﾝﾄ付与料"); const tax = nonTaxable ? null : Math.round(amount * 0.1);
-      const description = fee;
-      entries.push({ platform: "楽天市場", document_type: "店舗別内訳書", invoice_date: invoice, expense_month: month(start), billing_month: month(invoice), fee_type: rakutenFeeType(description), description, amount, tax_amount: tax, total_amount: tax == null ? amount : amount + tax, category: "販売関連費", status: "確定", source_filename: filename, source_hash: hash, source_line_key: `${fee}:${match.index}:${index++}`, raw_text: match[0] });
+      entries.push({ platform: "楽天市場", document_type: "店舗別内訳書", invoice_date: invoice, expense_month: month(start), billing_month: month(invoice), fee_type: rakutenFeeType(fee), description: fee, amount, tax_amount: tax, total_amount: tax == null ? amount : amount + tax, category: "販売関連費", status: "確定", source_filename: filename, source_hash: hash, source_line_key: `${fee}:${match.index}:${index++}`, raw_text: match[0] });
     }
   });
   return entries;
@@ -65,8 +53,7 @@ function parseAmazon(text: string, filename: string, hash: string): Entry[] {
   const expenseMonth = period ? `${period[1]}-${period[2].padStart(2, "0")}-01` : null;
   const entries: Entry[] = [];
   AMAZON_FEES.forEach((fee) => {
-    const escaped = fee.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); const re = new RegExp(`${escaped}\\s*(-?)\\s*￥?\\s*([\\d,]+)`, "g");
-    let match: RegExpExecArray | null; let index = 0;
+    const escaped = fee.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); const re = new RegExp(`${escaped}\\s*(-?)\\s*￥?\\s*([\\d,]+)`, "g"); let match: RegExpExecArray | null; let index = 0;
     while ((match = re.exec(normalized))) {
       const amount = money(match[2]); if (!Number.isFinite(amount) || amount === 0) continue;
       entries.push({ platform: "Amazon", document_type: "支払明細書", invoice_date: null, expense_month: expenseMonth, billing_month: null, fee_type: fee === "Amazon手数料" ? "販売手数料" : fee, description: fee, amount: Math.abs(amount), tax_amount: null, total_amount: Math.abs(amount), category: "販売関連費", status: "確定", source_filename: filename, source_hash: hash, source_line_key: `${fee}:${match.index}:${index++}`, raw_text: match[0] });
@@ -83,8 +70,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // pdf-parse v1 is CommonJS; require avoids ESM/CJS interop differences in Next.js server builds.
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const pdfParse = require("pdf-parse") as (input: Buffer) => Promise<{ text: string }>;
-    const text = (await pdfParse(buffer)).text || "";
-    const normalized = text.normalize("NFKC");
+    const text = (await pdfParse(buffer)).text || ""; const normalized = text.normalize("NFKC");
     const platform = /楽天市場|楽天ペイ|RPP|ｼｽﾃﾑ利用料_PC/.test(text) ? "楽天市場" : /Amazon手数料|フルフィルメント by Amazon|支払明細書/.test(normalized) ? "Amazon" : null;
     if (!platform) return res.status(400).json({ error: "楽天市場またはAmazonの帳票として判定できませんでした。" });
     const entries = platform === "楽天市場" ? parseRakuten(text, filename, hash) : parseAmazon(normalized, filename, hash);
