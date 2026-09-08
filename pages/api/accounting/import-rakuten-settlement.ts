@@ -42,8 +42,14 @@ function parseSettlement(text: string, filename: string, hash: string): Settleme
   const source = text.normalize("NFKC").replace(/[\u00a0\u3000]+/g, " ").replace(/\s+/g, " ");
   if (!/総合精算書|支\s*払\s*通知書|支\s*払\s*合\s*計\s*額|精算日/.test(source)) return null;
 
-  const settlementDate = jpDate((source.match(/(\d{4}年\s*\d{1,2}月\s*\d{1,2}日)\s*(?:振込予定|精算日)/) || [])[1]);
-  const period = source.match(/(\d{4}年\s*\d{1,2}月\s*\d{1,2}日)\s*[～~\-–]\s*(\d{4}年\s*\d{1,2}月\s*\d{1,2}日)\s*決済確定分/);
+  // PDFの抽出結果では「精算日:2026年9月15日」のようにラベルが先に来る場合と、
+  // 「2026年9月15日 振込予定」のように日付が先に来る場合の両方があります。
+  const settlementDateMatch = source.match(
+    /(?:振\s*込\s*予\s*定|精\s*算\s*日)\s*[:：]?\s*(\d{4}年\s*\d{1,2}月\s*\d{1,2}日)|(\d{4}年\s*\d{1,2}月\s*\d{1,2}日)\s*(?:振\s*込\s*予\s*定|精\s*算\s*日)/
+  );
+  const settlementDate = jpDate(settlementDateMatch?.[1] || settlementDateMatch?.[2]);
+
+  const period = source.match(/(\d{4}年\s*\d{1,2}月\s*\d{1,2}日)\s*[～~〜\-–]\s*(\d{4}年\s*\d{1,2}月\s*\d{1,2}日)\s*決\s*済\s*確\s*定\s*分/);
   const paymentPeriodStart = jpDate(period?.[1]); const paymentPeriodEnd = jpDate(period?.[2]);
 
   // 総合精算書の先頭サマリー「請求 - 支払 ¥3,774,746」を最優先します。
