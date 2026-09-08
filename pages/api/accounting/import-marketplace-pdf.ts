@@ -59,19 +59,16 @@ function parseRakutenCalculation(text: string, filename: string, hash: string): 
   ];
   targets.forEach(({ label, type }) => {
     const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const re = new RegExp(`${escaped}[\\s\\S]*?（(\\d{1,2})月分）[\\s\\S]*?合計\\s*\\\\[\\d,]+\\s*\\\\[\\d,]+`, "g");
+    // Each calculation section contains a summary row such as: 合計 \1,183,778 \45,513.
+    // Capture the second number, which is the actual fee, rather than the sales/settlement base.
+    const re = new RegExp(`${escaped}[\\s\\S]{0,500}?（(\\d{1,2})月分）[\\s\\S]{0,3500}?合計\\s*[\\\\¥￥]?\\s*[\\d,]+\\s*[\\\\¥￥]?\\s*([\\d,]+)`, "g");
     let match: RegExpExecArray | null; let index = 0;
     while ((match = re.exec(source))) {
-      const section = match[0];
-      const amountMatch = section.match(/合計\s*\\[\d,]+\s*\\[\d,]+/);
-      if (!amountMatch) continue;
-      const pair = amountMatch[0].match(/\\[\d,]+/g) || [];
-      if (pair.length < 2) continue;
-      const amount = money(pair[1]);
+      const amount = money(match[2]);
       const expense = invoice ? `${invoice.slice(0, 4)}-${match[1].padStart(2, "0")}-01` : null;
       if (!Number.isFinite(amount) || amount === 0) continue;
       const tax = Math.round(amount * 0.1);
-      entries.push({ platform: "楽天市場", document_type: "品目別請求計算書", invoice_date: invoice, expense_month: expense, billing_month: month(invoice), fee_type: type, description: `${label}（${match[1]}月分）`, amount, tax_amount: tax, total_amount: amount + tax, category: "販売関連費", status: "確定", source_filename: filename, source_hash: hash, source_line_key: `calculation:${label}:${match.index}:${index++}`, raw_text: section.slice(-500) });
+      entries.push({ platform: "楽天市場", document_type: "品目別請求計算書", invoice_date: invoice, expense_month: expense, billing_month: month(invoice), fee_type: type, description: `${label}（${match[1]}月分）`, amount, tax_amount: tax, total_amount: amount + tax, category: "販売関連費", status: "確定", source_filename: filename, source_hash: hash, source_line_key: `calculation:${label}:${match.index}:${index++}`, raw_text: match[0].slice(-700) });
     }
   });
   return entries;
