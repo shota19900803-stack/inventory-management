@@ -3431,13 +3431,13 @@ async function cancelSale(sale: any) {
                 </td>
 
                           <td style={{ padding: 10 }}>
-                            ({{
+                  {({
                     "楽天市場": "楽天",
                     "Amazon": "アマ",
                     "Yahoo!ショッピング": "ﾔﾌｼｮ",
                     "メルカリ": "ﾒﾙｶﾘ",
-                  }[sale.sales_channel || ""] ?? sale.sales_channel || "—")}
-                          </td>
+                  }[sale.sales_channel || ""] ?? (sale.sales_channel || "—"))}
+                </td>
 
                           <td style={{ padding: 10, whiteSpace: "nowrap" }}>
                             {sale.order_number || "—"}
