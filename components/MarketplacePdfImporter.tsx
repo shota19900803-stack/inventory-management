@@ -8,57 +8,116 @@ type Entry = {
   fee_type: string; description: string; amount: number; tax_amount: number | null; total_amount: number | null; category: string; status: string;
   source_filename: string; source_hash: string; source_line_key: string; raw_text: string;
 };
+
+type Settlement = {
+  platform: "楽天市場"; document_type: "楽天精算・振込明細"; source_hash: string; source_filename: string;
+  settlement_date: string | null; payment_period_start: string | null; payment_period_end: string | null;
+  payment_calculation_amount: number; billing_cutoff_date: string | null; billing_calculation_amount: number;
+  net_transfer_amount: number; status: "予定" | "確定";
+};
+
 const yen = (n: number) => `¥${Math.round(n).toLocaleString()}`;
+const date = (v: string | null) => v ? v.replace(/-/g, "/") : "—";
 
 export default function MarketplacePdfImporter() {
   const supabase = supabaseBrowser;
-  const [open, setOpen] = useState(false); const [file, setFile] = useState<File | null>(null); const [entries, setEntries] = useState<Entry[]>([]);
-  const [platform, setPlatform] = useState(""); const [busy, setBusy] = useState(false); const [message, setMessage] = useState("");
+  const [open, setOpen] = useState(false);
+  const [file, setFile] = useState<File | null>(null);
+  const [entries, setEntries] = useState<Entry[]>([]);
+  const [settlement, setSettlement] = useState<Settlement | null>(null);
+  const [platform, setPlatform] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  function resetResult() { setEntries([]); setSettlement(null); setPlatform(""); setMessage(""); }
 
   async function analyze() {
-    if (!file) return; setBusy(true); setMessage(""); setEntries([]); setPlatform("");
+    if (!file) return;
+    setBusy(true); resetResult();
     try {
       const form = new FormData(); form.append("file", file);
       const response = await fetch("/api/accounting/import-marketplace-pdf", { method: "POST", body: form });
-      const data = await response.json(); if (!response.ok) throw new Error(data.error || "PDFを解析できませんでした。");
-      setPlatform(data.platform || ""); setEntries((data.entries || []) as Entry[]);
-      setMessage(data.entries?.length ? `${data.entries.length}件を読み取りました。登録前に確認してください。` : "費用明細を見つけられませんでした。");
-    } catch (error) { setPlatform(""); setMessage(error instanceof Error ? error.message : "PDFの解析に失敗しました。"); }
-    finally { setBusy(false); }
+      const data = await response.json();
+      if (response.ok && data.entries?.length) {
+        setPlatform(data.platform || ""); setEntries(data.entries as Entry[]);
+        setMessage(`${data.entries.length}件を読み取りました。登録前に確認してください。`);
+        return;
+      }
+
+      // 経費帳票でなければ、同じPDFを楽天の精算・振込明細として自動判定します。
+      const settlementResponse = await fetch("/api/accounting/import-rakuten-settlement", { method: "POST", body: form });
+      const settlementData = await settlementResponse.json();
+      if (!settlementResponse.ok) throw new Error(data.error || settlementData.error || "楽天・Amazonの帳票として判定できませんでした。");
+      setPlatform("楽天市場"); setSettlement(settlementData.settlement as Settlement);
+      setMessage("楽天の精算・振込情報を読み取りました。登録前に確認してください。");
+    } catch (error) {
+      resetResult(); setMessage(error instanceof Error ? error.message : "PDFの解析に失敗しました。");
+    } finally { setBusy(false); }
   }
 
   const isCalculationSheet = entries.length > 0 && entries.every((entry) => entry.document_type === "品目別請求計算書");
 
-  async function save() {
-    if (!entries.length || isCalculationSheet) return; setBusy(true); setMessage("");
+  async function saveEntries() {
+    if (!entries.length || isCalculationSheet) return;
+    setBusy(true); setMessage("");
     try {
       const hash = entries[0].source_hash;
       const { data: existing, error: existingError } = await supabase.from("marketplace_cost_entries").select("id").eq("source_hash", hash).limit(1);
       if (existingError) throw existingError;
       if ((existing || []).length > 0) { setMessage("このPDFはすでに登録済みです。二重計上を防止しました。"); return; }
-      const { error } = await supabase.from("marketplace_cost_entries").insert(entries); if (error) throw error;
+      const { error } = await supabase.from("marketplace_cost_entries").insert(entries);
+      if (error) throw error;
       setMessage(`${entries.length}件を経理データへ登録しました。`); setEntries([]); setFile(null); setPlatform("");
       const input = document.getElementById("marketplace-pdf-input") as HTMLInputElement | null; if (input) input.value = "";
     } catch (error) { setMessage(error instanceof Error ? error.message : "登録に失敗しました。"); }
     finally { setBusy(false); }
   }
+
+  async function saveSettlement() {
+    if (!settlement) return;
+    setBusy(true); setMessage("");
+    try {
+      const { data: existing, error: existingError } = await supabase.from("rakuten_settlements").select("id").eq("source_hash", settlement.source_hash).limit(1);
+      if (existingError) throw existingError;
+      if ((existing || []).length) { setMessage("この精算PDFはすでに登録済みです。二重登録を防止しました。"); return; }
+      const { error } = await supabase.from("rakuten_settlements").insert(settlement);
+      if (error) throw error;
+      setMessage("楽天の精算・振込情報を登録しました。利益計算とは分離して資金繰りに反映します。");
+    } catch (error) { setMessage(error instanceof Error ? error.message : "登録に失敗しました。"); }
+    finally { setBusy(false); }
+  }
+
   const total = entries.reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
 
   return <>
-    <button type="button" onClick={() => setOpen(true)} style={{ position: "fixed", right: 20, bottom: 72, zIndex: 1200, border: 0, borderRadius: 999, padding: "13px 18px", background: "#166534", color: "#fff", fontWeight: 900, boxShadow: "0 8px 24px rgba(17,24,39,.22)", cursor: "pointer" }}>📄 モール請求書を自動経理</button>
+    <button type="button" onClick={() => setOpen(true)} style={{ position: "fixed", right: 20, bottom: 72, zIndex: 1200, border: 0, borderRadius: 999, padding: "13px 18px", background: "#166534", color: "#fff", fontWeight: 900, boxShadow: "0 8px 24px rgba(17,24,39,.22)", cursor: "pointer" }}>📄 楽天・Amazon PDFを自動経理</button>
     {open && <div style={{ position: "fixed", inset: 0, zIndex: 1300, background: "rgba(17,24,39,.42)", padding: 20, overflowY: "auto" }}>
       <section style={{ width: "min(1100px, 100%)", margin: "20px auto", background: "#fff", borderRadius: 18, padding: 22, boxShadow: "0 20px 60px rgba(0,0,0,.2)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
-          <div><div style={{ fontSize: 12, letterSpacing: 1.5, color: "#6b7280", fontWeight: 800 }}>AUTO ACCOUNTING</div><h2 style={{ margin: "4px 0 5px" }}>📄 モール請求書を自動経理</h2><p style={{ margin: 0, color: "#6b7280" }}>楽天・AmazonのPDFから費目・発生月・請求月を読み取り、確認してから登録します。</p></div>
+          <div><div style={{ fontSize: 12, letterSpacing: 1.5, color: "#6b7280", fontWeight: 800 }}>AUTO ACCOUNTING</div><h2 style={{ margin: "4px 0 5px" }}>📄 楽天・Amazon PDFを自動経理</h2><p style={{ margin: 0, color: "#6b7280" }}>PDFの種類を自動判定し、費用は利益計算へ、精算・振込は資金繰りへ振り分けます。</p></div>
           <button type="button" onClick={() => setOpen(false)} style={{ border: 0, background: "#f3f4f6", borderRadius: 10, padding: "8px 12px", cursor: "pointer", fontWeight: 800 }}>閉じる</button>
         </div>
-        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 16 }}><input id="marketplace-pdf-input" type="file" accept="application/pdf,.pdf" onChange={(e) => { setFile(e.target.files?.[0] || null); setEntries([]); setPlatform(""); setMessage(""); }} /><button type="button" onClick={analyze} disabled={!file || busy} style={{ border: 0, borderRadius: 10, padding: "10px 16px", background: "#111827", color: "#fff", fontWeight: 800, opacity: !file || busy ? 0.55 : 1 }}>{busy ? "読み取り中…" : "PDFを読み取る"}</button>{platform && <span style={{ fontWeight: 800 }}>{platform}</span>}</div>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 16 }}><input id="marketplace-pdf-input" type="file" accept="application/pdf,.pdf" onChange={(e) => { setFile(e.target.files?.[0] || null); resetResult(); }} /><button type="button" onClick={analyze} disabled={!file || busy} style={{ border: 0, borderRadius: 10, padding: "10px 16px", background: "#111827", color: "#fff", fontWeight: 800, opacity: !file || busy ? 0.55 : 1 }}>{busy ? "読み取り中…" : "PDFを読み取る"}</button>{platform && <span style={{ fontWeight: 800 }}>{platform}</span>}</div>
         {message && <div style={{ marginTop: 12, padding: "10px 13px", borderRadius: 10, background: "#f8fafc", color: "#374151" }}>{message}</div>}
+
         {isCalculationSheet && <div style={{ marginTop: 12, padding: "11px 13px", borderRadius: 10, background: "#fff7ed", border: "1px solid #fed7aa", color: "#9a3412", lineHeight: 1.6 }}>このPDFは「品目別請求計算書」です。費用の計算根拠を確認するために読み取れますが、店舗別内訳書と同じ費用を二重計上しないよう、経理登録はできません。経理登録には「店舗別内訳書」を使用してください。</div>}
+
         {entries.length > 0 && <>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 18, gap: 12, flexWrap: "wrap" }}><div><b>読み取り結果</b><span style={{ marginLeft: 10, color: "#6b7280" }}>{entries.length}件 / 税抜合計 {yen(total)}</span></div>{!isCalculationSheet && <button type="button" onClick={save} disabled={busy} style={{ border: 0, borderRadius: 10, padding: "10px 16px", background: "#166534", color: "#fff", fontWeight: 800, opacity: busy ? 0.55 : 1 }}>経理へ登録</button>}</div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 18, gap: 12, flexWrap: "wrap" }}><div><b>読み取り結果</b><span style={{ marginLeft: 10, color: "#6b7280" }}>{entries.length}件 / 税抜合計 {yen(total)}</span></div>{!isCalculationSheet && <button type="button" onClick={saveEntries} disabled={busy} style={{ border: 0, borderRadius: 10, padding: "10px 16px", background: "#166534", color: "#fff", fontWeight: 800, opacity: busy ? 0.55 : 1 }}>経理へ登録</button>}</div>
           <div style={{ overflowX: "auto", marginTop: 10 }}><table style={{ width: "100%", minWidth: 900, borderCollapse: "collapse", fontSize: 13 }}><thead><tr>{["発生月", "請求月", "費目", "内容", "税抜", "税込", "状態"].map((h) => <th key={h} style={{ textAlign: h === "費目" || h === "内容" ? "left" : "right", padding: 9, borderBottom: "2px solid #e5e7eb", whiteSpace: "nowrap" }}>{h}</th>)}</tr></thead><tbody>{entries.map((entry, index) => <tr key={`${entry.source_line_key}-${index}`}><td style={{ padding: 9, borderBottom: "1px solid #f1f5f9", textAlign: "right" }}>{entry.expense_month?.slice(0, 7) || "—"}</td><td style={{ padding: 9, borderBottom: "1px solid #f1f5f9", textAlign: "right" }}>{entry.billing_month?.slice(0, 7) || "—"}</td><td style={{ padding: 9, borderBottom: "1px solid #f1f5f9", fontWeight: 700 }}>{entry.fee_type}</td><td style={{ padding: 9, borderBottom: "1px solid #f1f5f9" }}>{entry.description}</td><td style={{ padding: 9, borderBottom: "1px solid #f1f5f9", textAlign: "right" }}>{yen(entry.amount)}</td><td style={{ padding: 9, borderBottom: "1px solid #f1f5f9", textAlign: "right" }}>{entry.total_amount == null ? "—" : yen(entry.total_amount)}</td><td style={{ padding: 9, borderBottom: "1px solid #f1f5f9", textAlign: "right" }}>{entry.status}</td></tr>)}</tbody></table></div>
           <div style={{ marginTop: 10, color: "#6b7280", fontSize: 12 }}>※ 楽天の決済金等・支払額は費用として二重計上せず、請求費目を取り込みます。</div>
+        </>}
+
+        {settlement && <>
+          <div style={{ marginTop: 18, padding: 16, borderRadius: 14, background: "#eff6ff", border: "1px solid #bfdbfe" }}><b>楽天の精算・振込情報</b><div style={{ marginTop: 7, color: "#475569", lineHeight: 1.7 }}>請求額は利益計算用、振込予定額は資金繰り用として分けて保存します。15日など「請求なし」の精算もそのまま記録できます。</div></div>
+          <div style={{ overflowX: "auto", marginTop: 14 }}><table style={{ width: "100%", minWidth: 760, borderCollapse: "collapse" }}><tbody>
+            <tr><th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #e5e7eb" }}>振込予定日</th><td style={{ padding: 10, borderBottom: "1px solid #e5e7eb" }}>{date(settlement.settlement_date)}　<span style={{ color: "#6b7280" }}>【{settlement.status}】</span></td></tr>
+            <tr><th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #e5e7eb" }}>決済確定期間</th><td style={{ padding: 10, borderBottom: "1px solid #e5e7eb" }}>{date(settlement.payment_period_start)} ～ {date(settlement.payment_period_end)}</td></tr>
+            <tr><th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #e5e7eb" }}>楽天からの支払計算額</th><td style={{ padding: 10, borderBottom: "1px solid #e5e7eb", textAlign: "right", fontWeight: 800 }}>{yen(settlement.payment_calculation_amount)}</td></tr>
+            <tr><th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #e5e7eb" }}>楽天からの請求計算額</th><td style={{ padding: 10, borderBottom: "1px solid #e5e7eb", textAlign: "right", fontWeight: 800 }}>{settlement.billing_cutoff_date ? `${date(settlement.billing_cutoff_date)}締分　` : ""}{yen(settlement.billing_calculation_amount)}{settlement.billing_calculation_amount === 0 ? "（請求なし）" : ""}</td></tr>
+            <tr><th style={{ textAlign: "left", padding: 10 }}>実際の振込予定額</th><td style={{ padding: 10, textAlign: "right", fontSize: 20, fontWeight: 900, color: "#166534" }}>{yen(settlement.net_transfer_amount)}</td></tr>
+          </tbody></table></div>
+          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}><button type="button" onClick={saveSettlement} disabled={busy} style={{ border: 0, borderRadius: 10, padding: "10px 16px", background: "#166534", color: "#fff", fontWeight: 800, opacity: busy ? 0.55 : 1 }}>精算・資金繰りへ登録</button></div>
         </>}
       </section>
     </div>}
