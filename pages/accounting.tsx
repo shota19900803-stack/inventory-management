@@ -1,5 +1,5 @@
 import dynamic from "next/dynamic";
-import MarketplacePdfImporter from "../components/MarketplacePdfImporter";
+import MarketplacePdfImporterV2 from "../components/MarketplacePdfImporterV2";
 
 const Accounting = dynamic(() => import("../components/Accounting"), {
   ssr: false,
@@ -10,9 +10,7 @@ export default function AccountingPage() {
   return (
     <>
       <Accounting />
-      <div style={{ position: "fixed", top: 18, right: 18, zIndex: 1200, width: "min(900px, calc(100vw - 36px))" }}>
-        <MarketplacePdfImporter />
-      </div>
+      <MarketplacePdfImporterV2 />
     </>
   );
 }
