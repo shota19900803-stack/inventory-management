@@ -16,7 +16,6 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
-          import re
           p = Path('components/Dashboard.tsx')
           s = p.read_text()
           marker = '<h2 style={{ margin: 0 }}>最近の売上</h2>'
@@ -28,44 +27,67 @@ jobs:
               raise SystemExit('recent sales section end not found')
           section = s[start:end]
 
-          # Target the table inside this section only.
-          table_pattern = r'(<table\s+style=\{\{.*?width:\s*"100%",)(.*?\}\}\s*>)'
-          m = re.search(table_pattern, section, flags=re.S)
-          if not m:
+          # Precisely target the table in the 最近の売上 section.
+          table_pos = section.find('<table')
+          if table_pos < 0:
               raise SystemExit('recent sales table not found')
-          table_open = m.group(0)
+          table_end = section.find('>', table_pos)
+          if table_end < 0:
+              raise SystemExit('recent sales table opening end not found')
+          table_open = section[table_pos:table_end + 1]
           if '<colgroup>' not in table_open:
-              new_open = re.sub(
-                  r'width:\s*"100%",.*?\}\}\s*>$',
-                  '''width: "100%",\n                    minWidth: 1240,\n                    tableLayout: "fixed",\n                    borderCollapse: "collapse",\n                  }}\n                >\n                  <colgroup>\n                    <col style={{ width: 95 }} />\n                    <col style={{ width: 280 }} />\n                    <col style={{ width: 75 }} />\n                    <col style={{ width: 180 }} />\n                    <col style={{ width: 55 }} />\n                    <col style={{ width: 105 }} />\n                    <col style={{ width: 125 }} />\n                    <col style={{ width: 90 }} />\n                    <col style={{ width: 105 }} />\n                    <col style={{ width: 130 }} />\n                  </colgroup>''',
-                  table_open,
-                  count=1,
-                  flags=re.S,
-              )
-              section = section[:m.start()] + new_open + section[m.end():]
+              table_open = '''<table
+                  style={{
+                    width: "100%",
+                    minWidth: 1240,
+                    tableLayout: "fixed",
+                    borderCollapse: "collapse",
+                  }}
+                >
+                  <colgroup>
+                    <col style={{ width: 95 }} />
+                    <col style={{ width: 280 }} />
+                    <col style={{ width: 75 }} />
+                    <col style={{ width: 180 }} />
+                    <col style={{ width: 55 }} />
+                    <col style={{ width: 105 }} />
+                    <col style={{ width: 125 }} />
+                    <col style={{ width: 90 }} />
+                    <col style={{ width: 105 }} />
+                    <col style={{ width: 130 }} />
+                  </colgroup>'''
+              section = section[:table_pos] + table_open + section[table_end + 1:]
           else:
               section = section.replace('minWidth: 1340,', 'minWidth: 1240,', 1)
 
           # Date: 2026-09-08 -> 26/09/08.
-          date_pattern = r'<td style=\{\{ padding: 10 \}\}>\s*\{sale\.sale_date\}\s*</td>'
-          section, n = re.subn(
-              date_pattern,
-              '''<td style={{ padding: "8px 10px", whiteSpace: "nowrap" }}>\n                            {String(sale.sale_date ?? "").replace(/^20(\\d{2})-(\\d{2})-(\\d{2}).*$/, "$1/$2/$3")}\n                          </td>''',
-              section,
-              count=1,
-          )
-          if n != 1 and 'String(sale.sale_date ?? "").replace' not in section:
+          old_date = '''<td style={{ padding: 10 }}>
+                            {sale.sale_date}
+                          </td>'''
+          new_date = '''<td style={{ padding: "8px 10px", whiteSpace: "nowrap" }}>
+                            {String(sale.sale_date ?? "").slice(2).replace(/-/g, "/")}
+                          </td>'''
+          if old_date in section:
+              section = section.replace(old_date, new_date, 1)
+          elif 'String(sale.sale_date ?? "").slice(2).replace' not in section:
               raise SystemExit('recent sales date cell not found')
 
           # Shorten common sales channels.
-          channel_pattern = r'<td style=\{\{ padding: 10 \}\}>\s*\{sale\.sales_channel \|\|\s*"—"\}\s*</td>'
-          section, n = re.subn(
-              channel_pattern,
-              '''<td style={{ padding: "8px 10px", textAlign: "center", whiteSpace: "nowrap" }}>\n                            {{\n                              "楽天市場": "楽天",\n                              "Amazon": "アマ",\n                              "Yahoo!ショッピング": "ﾔﾌｼｮ",\n                              "メルカリ": "ﾒﾙｶﾘ",\n                            }[sale.sales_channel || ""] ?? sale.sales_channel || "—"}\n                          </td>''',
-              section,
-              count=1,
-          )
-          if n != 1 and '"楽天市場": "楽天"' not in section:
+          old_channel = '''<td style={{ padding: 10 }}>
+                            {sale.sales_channel ||
+                              "—"}
+                          </td>'''
+          new_channel = '''<td style={{ padding: "8px 10px", textAlign: "center", whiteSpace: "nowrap" }}>
+                            {{
+                              "楽天市場": "楽天",
+                              "Amazon": "アマ",
+                              "Yahoo!ショッピング": "ﾔﾌｼｮ",
+                              "メルカリ": "ﾒﾙｶﾘ",
+                            }[sale.sales_channel || ""] ?? sale.sales_channel || "—"}
+                          </td>'''
+          if old_channel in section:
+              section = section.replace(old_channel, new_channel, 1)
+          elif '"楽天市場": "楽天"' not in section:
               raise SystemExit('recent sales channel cell not found')
 
           s = s[:start] + section + s[end:]
