@@ -37,6 +37,8 @@ function amountAfterLabel(source: string, label: RegExp, maxChars = 500): number
 }
 
 function parseSettlement(text: string, filename: string, hash: string): Settlement | null {
+  // 楽天のPDFは「請 求 支 払 繰 越」のように文字間へ空白が入り、
+  // 金額も表の後方へまとめて抽出されることがあります。
   const source = text.normalize("NFKC").replace(/[\u00a0\u3000]+/g, " ").replace(/\s+/g, " ");
   if (!/総合精算書|支\s*払\s*通知書|支\s*払\s*合\s*計\s*額|精算日/.test(source)) return null;
 
@@ -44,18 +46,30 @@ function parseSettlement(text: string, filename: string, hash: string): Settleme
   const period = source.match(/(\d{4}年\s*\d{1,2}月\s*\d{1,2}日)\s*[～~\-–]\s*(\d{4}年\s*\d{1,2}月\s*\d{1,2}日)\s*決済確定分/);
   const paymentPeriodStart = jpDate(period?.[1]); const paymentPeriodEnd = jpDate(period?.[2]);
 
-  // 楽天の総合精算書では「支払」が楽天→店舗への金額を意味します。
-  // PDF抽出ではラベルと金額が離れ、さらに「支 払」のように分割されることがあります。
+  // 総合精算書の先頭サマリー「請求 - 支払 ¥3,774,746」を最優先します。
+  // ここなら請求と支払が同じ論理行なので、請求額と振込額を取り違えません。
+  const summary = source.match(/請\s*求\s*(?:-|－|—|―)\s*支\s*払\s*(?:[\\¥￥]\s*)?([\d,]+)(?:\s*円)?/);
+  const summaryWithBilling = source.match(/請\s*(?:[\\¥￥]\s*)?([\d,]+)\s*(?:円)?\s*支\s*払\s*(?:[\\¥￥]\s*)?([\d,]+)/);
+
   const labeledPayment = amountAfterLabel(source, /支\s*払\s*合\s*計\s*額/);
   const generalPayment = amountAfterLabel(source, /(?:^|[\s　])支\s*払(?:[\s　]|$)/, 700);
   const storePaymentMatch = source.match(/楽天市場店\s*[-－]\s*(?:[\\¥￥]\s*)?([\d,]+)|店舗別内訳書No[^\d]{0,120}(?:[\\¥￥]\s*)?([\d,]+)/);
   const storePayment = storePaymentMatch ? money(storePaymentMatch[1] || storePaymentMatch[2]) : null;
-  const paymentAmount = labeledPayment ?? storePayment ?? generalPayment ?? 0;
 
-  // 「請求合計額」は店舗側が楽天へ支払う請求額。15日など「-」だけなら0円。
-  const labeledBilling = amountAfterLabel(source, /請\s*求\s*合\s*計\s*額/);
-  const generalBilling = amountAfterLabel(source, /(?:^|[\s　])請\s*求(?:[\s　]|$)/, 700);
-  const billingAmount = labeledBilling ?? generalBilling ?? 0;
+  let paymentAmount = 0;
+  let billingAmount = 0;
+  if (summary) {
+    paymentAmount = money(summary[1]);
+  } else if (summaryWithBilling) {
+    billingAmount = money(summaryWithBilling[1]);
+    paymentAmount = money(summaryWithBilling[2]);
+  } else {
+    paymentAmount = labeledPayment ?? storePayment ?? generalPayment ?? 0;
+    // 表のテキスト抽出では「請求合計額」の後に支払額が並ぶことがあるため、
+    // 請求額の一般抽出はここでは使わず、請求が明示されたサマリーを優先します。
+    const billingExplicit = source.match(/請\s*求\s*(?:[\\¥￥]\s*)?([\d,]+)\s*(?:円)?\s*(?:支\s*払|繰\s*越)/);
+    if (billingExplicit) billingAmount = money(billingExplicit[1]);
+  }
 
   const cutoffMatch = source.match(/(\d{4}年\s*\d{1,2}月\s*\d{1,2}日)\s*締分/);
   const netTransfer = paymentAmount - billingAmount;
