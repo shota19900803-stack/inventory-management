@@ -26,29 +26,38 @@ function readMultipart(req: NextApiRequest): Promise<{ filename: string; buffer:
 const money = (value: string) => Number(value.replace(/[\\¥￥,\s]/g, ""));
 const jpDate = (value?: string | null) => { const m = value?.match(/(\d{4})年\s*(\d{1,2})月\s*(\d{1,2})日/); return m ? `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}` : null; };
 
+function amountAfterLabel(source: string, label: RegExp, maxChars = 500): number | null {
+  const match = label.exec(source);
+  if (!match) return null;
+  const area = source.slice(match.index + match[0].length, match.index + match[0].length + maxChars);
+  const amounts = [...area.matchAll(/(?:[\\¥￥]\s*)?([\d]{1,3}(?:,[\d]{3})+|\d+)\s*(?:円)?/g)]
+    .map((m) => money(m[1]))
+    .filter((n) => Number.isFinite(n) && n > 0);
+  return amounts.length ? amounts[amounts.length - 1] : null;
+}
+
 function parseSettlement(text: string, filename: string, hash: string): Settlement | null {
-  // PDFのテキスト抽出では「請 求 支 払 繰 越」のように文字間へ空白が入ることがあるため、
-  // ラベル判定用に日本語ラベル周辺の空白を許容します。
   const source = text.normalize("NFKC").replace(/[\u00a0\u3000]+/g, " ").replace(/\s+/g, " ");
-  if (!/総合精算書|支\s*払\s*通知書|楽天からの支\s*払計算額|楽天からの請\s*求計算額|精算日/.test(source)) return null;
+  if (!/総合精算書|支\s*払\s*通知書|支\s*払\s*合\s*計\s*額|精算日/.test(source)) return null;
 
   const settlementDate = jpDate((source.match(/(\d{4}年\s*\d{1,2}月\s*\d{1,2}日)\s*(?:振込予定|精算日)/) || [])[1]);
   const period = source.match(/(\d{4}年\s*\d{1,2}月\s*\d{1,2}日)\s*[～~\-–]\s*(\d{4}年\s*\d{1,2}月\s*\d{1,2}日)\s*決済確定分/);
   const paymentPeriodStart = jpDate(period?.[1]); const paymentPeriodEnd = jpDate(period?.[2]);
 
-  // 楽天の総合精算書では「支払」が楽天→店舗の金額を意味します。
-  // PDF抽出では「支払」が「支 払」のように分割される場合があります。
-  const labeledPayment = source.match(/楽天からの支\s*払計算額[\s\S]{0,220}?(?:[\\¥￥]\s*)?([\d,]+)\s*(?:円)?/);
-  const generalPayment = source.match(/(?:^|[\s　])支\s*払\s*(?:[\\¥￥]\s*)?([\d,]+)\s*(?:円)?/);
-  const paymentMatch = labeledPayment || generalPayment;
+  // 楽天の総合精算書では「支払」が楽天→店舗への金額を意味します。
+  // PDF抽出ではラベルと金額が離れ、さらに「支 払」のように分割されることがあります。
+  const labeledPayment = amountAfterLabel(source, /支\s*払\s*合\s*計\s*額/);
+  const generalPayment = amountAfterLabel(source, /(?:^|[\s　])支\s*払(?:[\s　]|$)/, 700);
+  const storePaymentMatch = source.match(/楽天市場店\s*[-－]\s*(?:[\\¥￥]\s*)?([\d,]+)|店舗別内訳書No[^\d]{0,120}(?:[\\¥￥]\s*)?([\d,]+)/);
+  const storePayment = storePaymentMatch ? money(storePaymentMatch[1] || storePaymentMatch[2]) : null;
+  const paymentAmount = labeledPayment ?? storePayment ?? generalPayment ?? 0;
 
-  const labeledBilling = source.match(/楽天からの請\s*求計算額[\s\S]{0,220}?(?:[\\¥￥]\s*)?([\d,]+)\s*(?:円)?/);
-  const generalBilling = source.match(/(?:^|[\s　])請\s*求\s*(?:[\\¥￥]\s*)?([\d,]+)\s*(?:円)?/);
-  const billingMatch = labeledBilling || generalBilling;
+  // 「請求合計額」は店舗側が楽天へ支払う請求額。15日など「-」だけなら0円。
+  const labeledBilling = amountAfterLabel(source, /請\s*求\s*合\s*計\s*額/);
+  const generalBilling = amountAfterLabel(source, /(?:^|[\s　])請\s*求(?:[\s　]|$)/, 700);
+  const billingAmount = labeledBilling ?? generalBilling ?? 0;
 
   const cutoffMatch = source.match(/(\d{4}年\s*\d{1,2}月\s*\d{1,2}日)\s*締分/);
-  const paymentAmount = paymentMatch ? money(paymentMatch[1]) : 0;
-  const billingAmount = billingMatch ? money(billingMatch[1]) : 0;
   const netTransfer = paymentAmount - billingAmount;
   if (!settlementDate && paymentAmount === 0 && billingAmount === 0) return null;
 
