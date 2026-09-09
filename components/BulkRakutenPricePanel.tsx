@@ -22,11 +22,15 @@ type Result = {
   price: number | null;
   productName?: string | null;
   itemUrl?: string | null;
+  priceNaviUrl?: string | null;
   shopName?: string | null;
+  newListingCount?: number | null;
   error?: string | null;
 };
 
 type Slot = { productId: string; keyword: string; jan: string };
+
+type RakutenInfo = { count: number | null; priceNaviUrl: string | null; itemUrl: string | null };
 
 const yen = (n: number | null | undefined) => n == null ? "—" : `¥${Math.round(n).toLocaleString()}`;
 const checked = (v: string | null | undefined) => v ? new Date(v).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "未取得";
@@ -38,6 +42,7 @@ export default function BulkRakutenPricePanel({ products, visible }: { products:
   const [slots, setSlots] = useState<Slot[]>(() => Array.from({ length: 5 }, emptySlot));
   const [localPrices, setLocalPrices] = useState<Record<string, number | null>>({});
   const [localCheckedAt, setLocalCheckedAt] = useState<Record<string, string | null>>({});
+  const [localRakutenInfo, setLocalRakutenInfo] = useState<Record<string, RakutenInfo>>({});
   const [running, setRunning] = useState(false);
   const [runningSlot, setRunningSlot] = useState<number | null>(null);
   const [message, setMessage] = useState("");
@@ -199,11 +204,12 @@ export default function BulkRakutenPricePanel({ products, visible }: { products:
         updated += 1;
         setLocalPrices((prev) => ({ ...prev, [product.id]: result.price }));
         setLocalCheckedAt((prev) => ({ ...prev, [product.id]: checkedAt }));
+        setLocalRakutenInfo((prev) => ({ ...prev, [product.id]: { count: result.newListingCount ?? null, priceNaviUrl: result.priceNaviUrl ?? null, itemUrl: result.itemUrl ?? null } }));
       }
 
       setErrors(failed);
       setHasError(failed.length > 0);
-      setMessage(failed.length ? `完了：${updated}件更新 / ${failed.length}件は取得できませんでした。` : `楽天市場の新品最安値を${updated}件更新しました。`);
+      setMessage(failed.length ? `完了：${updated}件更新 / ${failed.length}件は取得できませんでした。` : `楽天市場の新品最安値・新品出品数を${updated}件更新しました。`);
     } catch (error: any) {
       setMessage(error?.message || "楽天最安値の取得に失敗しました。");
       setHasError(true);
@@ -221,7 +227,7 @@ export default function BulkRakutenPricePanel({ products, visible }: { products:
         <div>
           <div style={{ fontSize: 13, fontWeight: 800, color: "#dc2626", letterSpacing: 1 }}>📊 楽天市場 相場管理</div>
           <h2 style={{ margin: "4px 0 6px", fontSize: 24 }}>楽天市場 新品最安値</h2>
-          <p style={{ margin: 0, color: "#6b7280", fontSize: 14 }}>商品を自分で最大5件選んで、必要な商品だけ楽天市場の新品最安値を検索できます。</p>
+          <p style={{ margin: 0, color: "#6b7280", fontSize: 14 }}>商品を自分で最大5件選んで、必要な商品だけ相場チェックできます。</p>
         </div>
         <button type="button" onClick={() => void fetchPrices([0,1,2,3,4])} disabled={running || selectedCount === 0} style={{ border: 0, borderRadius: 11, padding: "13px 18px", background: running ? "#9ca3af" : "#111827", color: "#fff", fontWeight: 800, cursor: running ? "default" : "pointer" }}>
           {running ? "🔄 楽天市場を検索中…" : `🔍 選択した${selectedCount}商品を検索`}
@@ -234,6 +240,7 @@ export default function BulkRakutenPricePanel({ products, visible }: { products:
           const suggestions = suggestionsFor(index);
           const price = product ? localPrices[product.id] ?? product.rakuten_lowest_price ?? null : null;
           const checkedAt = product ? localCheckedAt[product.id] ?? product.rakuten_price_checked_at ?? null : null;
+          const info = product ? localRakutenInfo[product.id] ?? null : null;
           return (
             <div key={index} style={{ position: "relative", border: product ? "1px solid #cbd5e1" : "1px dashed #cbd5e1", borderRadius: 14, padding: 14, background: product ? "#f8fafc" : "#fff" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
@@ -261,8 +268,28 @@ export default function BulkRakutenPricePanel({ products, visible }: { products:
                   <div style={{ fontWeight: 800, fontSize: 13, lineHeight: 1.45 }}>{product.name}</div>
                   <div style={{ marginTop: 5, color: "#64748b", fontSize: 11 }}>JAN：{product.jan_code || "—"}　/　在庫：{Number(product.stock_quantity || 0)}個</div>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "end", gap: 8, marginTop: 10 }}>
-                    <div><div style={{ color: "#64748b", fontSize: 11 }}>楽天新品最安値</div><div style={{ color: "#dc2626", fontSize: 20, fontWeight: 900 }}>{yen(price)}</div><div style={{ color: "#94a3b8", fontSize: 10 }}>{checked(checkedAt)}</div></div>
+                    <div>
+                      <div style={{ color: "#64748b", fontSize: 11 }}>楽天新品最安値</div>
+                      <div style={{ color: "#dc2626", fontSize: 20, fontWeight: 900 }}>{yen(price)}</div>
+                      <div style={{ color: "#94a3b8", fontSize: 10 }}>{checked(checkedAt)}</div>
+                    </div>
                     <button type="button" onClick={() => void fetchPrices([index])} disabled={running} style={{ border: 0, borderRadius: 9, padding: "9px 11px", background: running ? "#cbd5e1" : "#111827", color: "#fff", fontWeight: 800, cursor: running ? "default" : "pointer", whiteSpace: "nowrap" }}>{running && runningSlot === index ? "検索中…" : "この商品を検索"}</button>
+                  </div>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 10 }}>
+                    <div style={{ padding: 9, borderRadius: 9, background: "#fff7f7", border: "1px solid #fee2e2" }}>
+                      <div style={{ color: "#64748b", fontSize: 10 }}>新品出品数</div>
+                      <div style={{ marginTop: 2, fontSize: 18, fontWeight: 900 }}>{info?.count == null ? "—" : `${info.count.toLocaleString()}ショップ`}</div>
+                    </div>
+                    {info?.priceNaviUrl ? (
+                      <a href={info.priceNaviUrl} target="_blank" rel="noreferrer" style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "9px 8px", borderRadius: 9, background: "#dc2626", color: "#fff", textDecoration: "none", fontWeight: 900, fontSize: 12, textAlign: "center" }}>
+                        🔎 楽天 商品価格ナビを見る
+                      </a>
+                    ) : info?.itemUrl ? (
+                      <a href={info.itemUrl} target="_blank" rel="noreferrer" style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "9px 8px", borderRadius: 9, background: "#475569", color: "#fff", textDecoration: "none", fontWeight: 900, fontSize: 12, textAlign: "center" }}>
+                        🛒 楽天市場で商品を見る
+                      </a>
+                    ) : <div style={{ display: "flex", alignItems: "center", justifyContent: "center", color: "#94a3b8", fontSize: 11 }}>価格ナビURL未取得</div>}
                   </div>
                 </div>
               ) : <div style={{ marginTop: 10, color: "#94a3b8", fontSize: 12 }}>商品名検索・JAN検索・JAN読込のいずれかで商品を選択してください。</div>}
