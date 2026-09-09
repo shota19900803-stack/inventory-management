@@ -19,45 +19,59 @@ function normalize(value: unknown) {
 function isExcludedNewCondition(item: any) {
   const text = normalize(`${item?.itemName ?? ""} ${item?.catchcopy ?? ""} ${item?.itemCaption ?? ""}`);
   const excluded = [
-    "中古", "ジャンク", "開封済", "開封品", "箱なし", "欠品", "部品", "パーツ",
-    "訳あり", "アウトレット", "展示品", "リファービッシュ", "修理品", "used", "junk", "refurbished",
+    "中古", "中古品", "ジャンク", "開封済", "開封品", "箱なし", "欠品", "部品", "パーツ",
+    "訳あり", "アウトレット", "展示品", "リファービッシュ", "修理品", "整備済", "used", "junk", "refurbished",
   ];
   return excluded.some((word) => text.includes(normalize(word)));
 }
 
-function compactQueries(productName: string | null, productNo: string | null, brandName: string | null, makerName: string | null, productCaption: string | null) {
-  const candidates = [
-    productNo,
-    productName,
-    brandName && productName ? `${brandName} ${productName}` : null,
-    makerName && productName ? `${makerName} ${productName}` : null,
-  ]
-    .map((v) => String(v ?? "").trim())
-    .filter(Boolean);
+function extractModelHints(productName: string | null, productNo: string | null) {
+  const source = `${productNo ?? ""} ${productName ?? ""}`;
+  const matches = source.match(/[A-Z0-9]+(?:[-_/][A-Z0-9]+)+/gi) ?? [];
+  return [...new Set(matches.map((v) => v.trim()).filter((v) => v.length >= 4))].slice(0, 4);
+}
 
+function extractColorHints(productName: string | null) {
+  if (!productName) return [];
+  const colors = [
+    "ブラック", "ホワイト", "グレー", "シルバー", "ブルー", "レッド", "ピンク", "グリーン",
+    "パープル", "ベージュ", "ブラウン", "ゴールド", "ネイビー", "アイボリー", "オレンジ", "イエロー",
+    "black", "white", "gray", "grey", "blue", "red", "pink", "green", "purple", "beige", "brown",
+  ];
+  const normalized = normalize(productName);
+  return colors.filter((color) => normalized.includes(normalize(color)));
+}
+
+function compactQueries(
+  productName: string | null,
+  productNo: string | null,
+  brandName: string | null,
+  makerName: string | null,
+) {
   const result: string[] = [];
-  const add = (value: string) => {
-    const compact = value.split(/\s+/).filter(Boolean).slice(0, 6).join(" ").slice(0, 120);
+  const add = (value: string | null) => {
+    const compact = String(value ?? "").trim().split(/\s+/).filter(Boolean).slice(0, 6).join(" ").slice(0, 120);
     if (compact && !result.includes(compact)) result.push(compact);
   };
 
-  for (const candidate of candidates) add(candidate);
+  // Model number is the strongest fallback when JAN is not indexed in a shop title.
+  for (const model of extractModelHints(productName, productNo)) add(model);
 
-  // Long Rakuten product names often contain shop-specific suffixes.
-  // Try a short leading chunk as a broader fallback as well.
+  const colors = extractColorHints(productName);
+  for (const model of extractModelHints(productName, productNo)) {
+    for (const color of colors.slice(0, 2)) add(`${model} ${color}`);
+  }
+
+  add(productNo);
+  if (brandName && productNo) add(`${brandName} ${productNo}`);
+  if (makerName && productNo) add(`${makerName} ${productNo}`);
+
   if (productName) {
     const tokens = productName.split(/\s+/).filter(Boolean);
-    if (tokens.length > 2) add(tokens.slice(0, 4).join(" "));
-    if (tokens.length > 4) add(tokens.slice(0, 3).join(" "));
+    if (tokens.length >= 2) add(tokens.slice(0, 4).join(" "));
   }
 
-  // Product caption is only a last resort because it can be very long.
-  if (productCaption) {
-    const captionTokens = productCaption.split(/\s+/).filter(Boolean);
-    if (captionTokens.length > 0) add(captionTokens.slice(0, 5).join(" "));
-  }
-
-  return result;
+  return result.slice(0, 5);
 }
 
 function rakutenOrigin(requestOrigin: string) {
@@ -75,7 +89,8 @@ function rakutenOrigin(requestOrigin: string) {
   return requestOrigin.replace(/\/$/, "");
 }
 
-// Rakuten's documented per-application limit is 1 request/second.
+// Rakuten documents a limit of about one request/second per application.
+// Keep a small safety gap between requests in a warm server instance.
 const RAKUTEN_MIN_INTERVAL_MS = 1200;
 let lastRakutenRequestAt = 0;
 
@@ -88,9 +103,9 @@ async function waitForRakutenSlot() {
 
 async function fetchJson(url: URL, accessKey: string, origin: string, timeoutMs = 8000) {
   await waitForRakutenSlot();
-
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+
   try {
     const response = await fetch(url, {
       cache: "no-store",
@@ -102,16 +117,27 @@ async function fetchJson(url: URL, accessKey: string, origin: string, timeoutMs 
         "User-Agent": "inventory-management-rakuten-api/1.0",
       },
     });
+
     const text = await response.text();
     let data: any = {};
-    try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text.slice(0, 500) }; }
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      data = { raw: text.slice(0, 500) };
+    }
     return { response, data };
   } finally {
     clearTimeout(timer);
   }
 }
 
-async function rakutenItemSearch(applicationId: string, accessKey: string, keyword: string, origin: string, debug: any[]) {
+async function rakutenItemSearch(
+  applicationId: string,
+  accessKey: string,
+  keyword: string,
+  origin: string,
+  debug: any[],
+) {
   const url = new URL("https://openapi.rakuten.co.jp/ichibams/api/IchibaItem/Search/20260701");
   url.searchParams.set("format", "json");
   url.searchParams.set("formatVersion", "2");
@@ -122,28 +148,55 @@ async function rakutenItemSearch(applicationId: string, accessKey: string, keywo
   url.searchParams.set("hits", "30");
   url.searchParams.set("page", "1");
   url.searchParams.set("availability", "1");
-  // Broad search gives us more useful matches; used/junk listings are removed below.
   url.searchParams.set("field", "0");
   url.searchParams.set("purchaseType", "0");
 
   const { response, data } = await fetchJson(url, accessKey, origin);
   const items = Array.isArray(data?.items) ? data.items : [];
-  debug.push({ api: "IchibaItemSearch", keyword, status: response.status, count: Number(data?.count ?? items.length), error: data?.errors?.errorMessage ?? data?.error_description ?? data?.error ?? null });
-  if (!response.ok) throw new Error(data?.errors?.errorMessage || data?.error_description || data?.error || `楽天市場API HTTP ${response.status}`);
+  const error = data?.errors?.errorMessage ?? data?.error_description ?? data?.error ?? null;
+  debug.push({
+    api: "IchibaItemSearch",
+    keyword,
+    status: response.status,
+    count: Number(data?.count ?? items.length),
+    error,
+  });
+
+  if (!response.ok) {
+    throw new Error(error || `楽天市場API HTTP ${response.status}`);
+  }
+
   return { items, count: Number(data?.count ?? items.length) };
 }
 
-async function rakutenProductLookup(applicationId: string, accessKey: string, jan: string, origin: string, debug: any[]) {
+async function rakutenProductLookup(
+  applicationId: string,
+  accessKey: string,
+  jan: string,
+  origin: string,
+  debug: any[],
+) {
   const url = new URL("https://openapi.rakuten.co.jp/ichibaproduct/api/Product/Search/20250801");
   url.searchParams.set("format", "json");
   url.searchParams.set("formatVersion", "2");
   url.searchParams.set("applicationId", applicationId);
   url.searchParams.set("accessKey", accessKey);
   url.searchParams.set("productCode", jan);
+
   const { response, data } = await fetchJson(url, accessKey, origin);
   const items = Array.isArray(data?.items) ? data.items : [];
-  debug.push({ api: "ProductSearch", keyword: jan, status: response.status, count: Number(data?.count ?? items.length), error: data?.errors?.errorMessage ?? data?.error_description ?? data?.error ?? null });
-  if (!response.ok) throw new Error(data?.errors?.errorMessage || data?.error_description || data?.error || `楽天Product API HTTP ${response.status}`);
+  const error = data?.errors?.errorMessage ?? data?.error_description ?? data?.error ?? null;
+  debug.push({
+    api: "ProductSearch",
+    keyword: jan,
+    status: response.status,
+    count: Number(data?.count ?? items.length),
+    error,
+  });
+
+  if (!response.ok) {
+    throw new Error(error || `楽天Product API HTTP ${response.status}`);
+  }
 
   const item = items[0] ?? null;
   return {
@@ -158,34 +211,67 @@ async function rakutenProductLookup(applicationId: string, accessKey: string, ja
   };
 }
 
-function chooseLowestNew(items: any[], jan: string) {
-  const candidates = items
-    .map((item) => ({
-      name: item?.itemName ?? null,
-      price: asPrice(item?.itemPrice),
-      shopName: item?.shopName ?? null,
-      itemUrl: item?.itemUrl ?? null,
-      shopUrl: item?.shopUrl ?? null,
-      itemCode: item?.itemCode ?? null,
-      catchcopy: item?.catchcopy ?? null,
-      itemCaption: item?.itemCaption ?? null,
-      caption: item?.catchcopy ?? item?.itemCaption ?? null,
-    }))
-    .filter((item) => item.price !== null)
-    .filter((item) => !isExcludedNewCondition(item));
-
+function chooseLowestNew(items: any[], jan: string, hints: string[]) {
   const janDigits = normalize(jan);
-  const exactJan = candidates.filter((item) =>
-    normalize(`${item.name ?? ""} ${item.itemCode ?? ""} ${item.caption ?? ""}`).includes(janDigits),
-  );
-  const pool = exactJan.length > 0 ? exactJan : candidates;
-  pool.sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity));
-  return pool[0] ?? null;
+  const normalizedHints = hints.map(normalize).filter(Boolean);
+
+  const candidates = items
+    .map((item) => {
+      const text = normalize(`${item?.itemName ?? ""} ${item?.catchcopy ?? ""} ${item?.itemCaption ?? ""} ${item?.itemCode ?? ""}`);
+      const price = asPrice(item?.itemPrice);
+      let score = 0;
+      for (const hint of normalizedHints) {
+        if (hint && text.includes(hint)) score += hint.length >= 6 ? 4 : 2;
+      }
+      if (text.includes(janDigits)) score += 100;
+
+      return {
+        name: item?.itemName ?? null,
+        price,
+        shopName: item?.shopName ?? null,
+        itemUrl: item?.itemUrl ?? null,
+        shopUrl: item?.shopUrl ?? null,
+        itemCode: item?.itemCode ?? null,
+        catchcopy: item?.catchcopy ?? null,
+        itemCaption: item?.itemCaption ?? null,
+        caption: item?.catchcopy ?? item?.itemCaption ?? null,
+        score,
+        excluded: isExcludedNewCondition(item),
+      };
+    })
+    .filter((item) => item.price !== null)
+    .filter((item) => !item.excluded);
+
+  if (candidates.length === 0) return null;
+
+  const exactJan = candidates.filter((item) => {
+    const text = normalize(`${item.name ?? ""} ${item.itemCode ?? ""} ${item.caption ?? ""}`);
+    return text.includes(janDigits);
+  });
+
+  if (exactJan.length > 0) {
+    exactJan.sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity));
+    return exactJan[0];
+  }
+
+  // When searching by a model number, only accept listings that actually match it.
+  const matched = normalizedHints.length > 0
+    ? candidates.filter((item) => item.score > 0)
+    : candidates;
+  if (matched.length === 0) return null;
+
+  matched.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return (a.price ?? Infinity) - (b.price ?? Infinity);
+  });
+  return matched[0];
 }
 
 export async function GET(request: NextRequest) {
   const jan = cleanJan(request.nextUrl.searchParams.get("jan") || "");
-  if (jan.length !== 13) return NextResponse.json({ error: "13桁のJANコードを指定してください。" }, { status: 400 });
+  if (jan.length !== 13) {
+    return NextResponse.json({ error: "13桁のJANコードを指定してください。" }, { status: 400 });
+  }
 
   const result: any = {
     jan,
@@ -218,10 +304,6 @@ export async function GET(request: NextRequest) {
     let product: any = null;
     let productError: string | null = null;
 
-    // Product Search is used first to resolve the JAN to a Rakuten product name,
-    // model number and Product Price Navi URL. The 2025-08-01 API documentation
-    // notes that several old price/count fields may be null after the 2026 change,
-    // so Item Search is the price source when those fields are unavailable.
     try {
       product = await rakutenProductLookup(appId, accessKey, jan, origin, result.rakuten.debug);
       result.rakuten.newListingCount = product.newListingCount;
@@ -245,24 +327,29 @@ export async function GET(request: NextRequest) {
         let source = "";
         let lastSearchCount = 0;
 
-        // JAN itself is useful when shops include the JAN in the listing title.
-        // Then progressively broaden using the product metadata returned by Product Search.
-        const queries = [jan, ...compactQueries(
-          product?.productName ?? null,
-          product?.productNo ?? null,
-          product?.brandName ?? null,
-          product?.makerName ?? null,
-          product?.productCaption ?? null,
-        )];
+        // JAN often is not present in the public item title. Product Search resolves
+        // the JAN first, then we search the strongest model-number/color hints.
+        const queries = [
+          jan,
+          ...compactQueries(
+            product?.productName ?? null,
+            product?.productNo ?? null,
+            product?.brandName ?? null,
+            product?.makerName ?? null,
+          ),
+        ];
 
         const seenQueries = new Set<string>();
         for (const query of queries) {
           if (!query || seenQueries.has(query)) continue;
           seenQueries.add(query);
 
+          const hints = query === jan
+            ? []
+            : [query, product?.productNo, ...extractModelHints(product?.productName ?? null, product?.productNo ?? null), ...extractColorHints(product?.productName ?? null)];
           const search = await rakutenItemSearch(appId, accessKey, query, origin, result.rakuten.debug);
           lastSearchCount = search.count;
-          const candidate = chooseLowestNew(search.items, jan);
+          const candidate = chooseLowestNew(search.items, jan, hints.filter(Boolean));
           if (candidate) {
             chosen = candidate;
             source = `IchibaItemSearch:${query}`;
@@ -277,7 +364,9 @@ export async function GET(request: NextRequest) {
           result.rakuten.source = source;
           result.rakuten.error = null;
           if (result.rakuten.newListingCount === null && lastSearchCount > 0) {
-            result.rakuten.newListingCount = lastSearchCount;
+            // Product Search's official new-only count is nullable in the current API.
+            // Do not label the general Item Search count as a new-only count.
+            result.rakuten.newListingCount = null;
           }
         } else {
           result.rakuten.error = productError
