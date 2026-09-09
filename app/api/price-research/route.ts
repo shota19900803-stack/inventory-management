@@ -25,15 +25,38 @@ function isExcludedNewCondition(item: any) {
   return excluded.some((word) => text.includes(normalize(word)));
 }
 
-function compactQueries(productName: string | null, productNo: string | null, brandName: string | null) {
-  const candidates = [productNo, productName, brandName && productName ? `${brandName} ${productName}` : null]
+function compactQueries(productName: string | null, productNo: string | null, brandName: string | null, makerName: string | null, productCaption: string | null) {
+  const candidates = [
+    productNo,
+    productName,
+    brandName && productName ? `${brandName} ${productName}` : null,
+    makerName && productName ? `${makerName} ${productName}` : null,
+  ]
     .map((v) => String(v ?? "").trim())
     .filter(Boolean);
+
   const result: string[] = [];
-  for (const candidate of candidates) {
-    const compact = candidate.split(/\s+/).filter(Boolean).slice(0, 6).join(" ").slice(0, 120);
+  const add = (value: string) => {
+    const compact = value.split(/\s+/).filter(Boolean).slice(0, 6).join(" ").slice(0, 120);
     if (compact && !result.includes(compact)) result.push(compact);
+  };
+
+  for (const candidate of candidates) add(candidate);
+
+  // Long Rakuten product names often contain shop-specific suffixes.
+  // Try a short leading chunk as a broader fallback as well.
+  if (productName) {
+    const tokens = productName.split(/\s+/).filter(Boolean);
+    if (tokens.length > 2) add(tokens.slice(0, 4).join(" "));
+    if (tokens.length > 4) add(tokens.slice(0, 3).join(" "));
   }
+
+  // Product caption is only a last resort because it can be very long.
+  if (productCaption) {
+    const captionTokens = productCaption.split(/\s+/).filter(Boolean);
+    if (captionTokens.length > 0) add(captionTokens.slice(0, 5).join(" "));
+  }
+
   return result;
 }
 
@@ -53,8 +76,6 @@ function rakutenOrigin(requestOrigin: string) {
 }
 
 // Rakuten's documented per-application limit is 1 request/second.
-// Keep a safety gap between API calls. Most successful JAN lookups use only
-// Product Search, so a normal lookup now consumes just one Rakuten request.
 const RAKUTEN_MIN_INTERVAL_MS = 1200;
 let lastRakutenRequestAt = 0;
 
@@ -101,9 +122,10 @@ async function rakutenItemSearch(applicationId: string, accessKey: string, keywo
   url.searchParams.set("hits", "30");
   url.searchParams.set("page", "1");
   url.searchParams.set("availability", "1");
-  url.searchParams.set("field", "1");
+  // Broad search gives us more useful matches; used/junk listings are removed below.
+  url.searchParams.set("field", "0");
   url.searchParams.set("purchaseType", "0");
-  url.searchParams.set("NGKeyword", "中古 ジャンク 開封品 開封済 箱なし 欠品 部品 パーツ 訳あり アウトレット 展示品 リファービッシュ 修理品");
+
   const { response, data } = await fetchJson(url, accessKey, origin);
   const items = Array.isArray(data?.items) ? data.items : [];
   debug.push({ api: "IchibaItemSearch", keyword, status: response.status, count: Number(data?.count ?? items.length), error: data?.errors?.errorMessage ?? data?.error_description ?? data?.error ?? null });
@@ -122,11 +144,14 @@ async function rakutenProductLookup(applicationId: string, accessKey: string, ja
   const items = Array.isArray(data?.items) ? data.items : [];
   debug.push({ api: "ProductSearch", keyword: jan, status: response.status, count: Number(data?.count ?? items.length), error: data?.errors?.errorMessage ?? data?.error_description ?? data?.error ?? null });
   if (!response.ok) throw new Error(data?.errors?.errorMessage || data?.error_description || data?.error || `楽天Product API HTTP ${response.status}`);
+
   const item = items[0] ?? null;
   return {
     productName: item?.productName ?? null,
     productNo: item?.productNo ?? null,
     brandName: item?.brandName ?? null,
+    makerName: item?.makerName ?? null,
+    productCaption: item?.productCaption ?? null,
     productUrl: item?.productUrlPC ?? item?.productUrlMobile ?? item?.searchUrl ?? null,
     newListingCount: Number.isFinite(Number(item?.usedExcludeSalesItemCount)) ? Number(item.usedExcludeSalesItemCount) : null,
     newLowestPrice: asPrice(item?.usedExcludeSalesMinPrice),
@@ -142,10 +167,13 @@ function chooseLowestNew(items: any[], jan: string) {
       itemUrl: item?.itemUrl ?? null,
       shopUrl: item?.shopUrl ?? null,
       itemCode: item?.itemCode ?? null,
+      catchcopy: item?.catchcopy ?? null,
+      itemCaption: item?.itemCaption ?? null,
       caption: item?.catchcopy ?? item?.itemCaption ?? null,
     }))
     .filter((item) => item.price !== null)
     .filter((item) => !isExcludedNewCondition(item));
+
   const janDigits = normalize(jan);
   const exactJan = candidates.filter((item) =>
     normalize(`${item.name ?? ""} ${item.itemCode ?? ""} ${item.caption ?? ""}`).includes(janDigits),
@@ -190,22 +218,20 @@ export async function GET(request: NextRequest) {
     let product: any = null;
     let productError: string | null = null;
 
-    // Product Search is the preferred path because it can return the true
-    // new-only minimum, new listing count, and Product Price Navi URL in one request.
+    // Product Search is used first to resolve the JAN to a Rakuten product name,
+    // model number and Product Price Navi URL. The 2025-08-01 API documentation
+    // notes that several old price/count fields may be null after the 2026 change,
+    // so Item Search is the price source when those fields are unavailable.
     try {
       product = await rakutenProductLookup(appId, accessKey, jan, origin, result.rakuten.debug);
       result.rakuten.newListingCount = product.newListingCount;
       result.rakuten.priceNaviUrl = product.productUrl;
       result.rakuten.productUrl = product.productUrl;
 
-      // If Product Search already has the new-only price, stop here.
-      // This avoids an unnecessary second request and keeps us safely under
-      // Rakuten's per-application request limit.
       if (product.newLowestPrice !== null) {
         result.rakuten.available = true;
         result.rakuten.lowestPrice = product.newLowestPrice;
         result.rakuten.source = "ProductSearch:new-only";
-        result.rakuten.error = null;
       }
     } catch (error: any) {
       productError = error?.name === "AbortError"
@@ -213,25 +239,34 @@ export async function GET(request: NextRequest) {
         : error?.message || "楽天Product APIへの接続に失敗しました。";
     }
 
-    // Only fall back to Item Search when Product Search could not supply a
-    // usable new-only price. This is deliberately a fallback, not the normal path.
     if (!result.rakuten.available) {
       try {
-        let search = await rakutenItemSearch(appId, accessKey, jan, origin, result.rakuten.debug);
-        let items = search.items;
-        let chosen = chooseLowestNew(items, jan);
-        let source = "IchibaItemSearch:JAN";
+        let chosen: any = null;
+        let source = "";
+        let lastSearchCount = 0;
 
-        if (!chosen && product) {
-          const queries = compactQueries(product.productName, product.productNo, product.brandName);
-          for (const query of queries) {
-            search = await rakutenItemSearch(appId, accessKey, query, origin, result.rakuten.debug);
-            items = search.items;
-            chosen = chooseLowestNew(items, jan);
-            if (chosen) {
-              source = `IchibaItemSearch:${query}`;
-              break;
-            }
+        // JAN itself is useful when shops include the JAN in the listing title.
+        // Then progressively broaden using the product metadata returned by Product Search.
+        const queries = [jan, ...compactQueries(
+          product?.productName ?? null,
+          product?.productNo ?? null,
+          product?.brandName ?? null,
+          product?.makerName ?? null,
+          product?.productCaption ?? null,
+        )];
+
+        const seenQueries = new Set<string>();
+        for (const query of queries) {
+          if (!query || seenQueries.has(query)) continue;
+          seenQueries.add(query);
+
+          const search = await rakutenItemSearch(appId, accessKey, query, origin, result.rakuten.debug);
+          lastSearchCount = search.count;
+          const candidate = chooseLowestNew(search.items, jan);
+          if (candidate) {
+            chosen = candidate;
+            source = `IchibaItemSearch:${query}`;
+            break;
           }
         }
 
@@ -241,8 +276,8 @@ export async function GET(request: NextRequest) {
           result.rakuten.items = [chosen];
           result.rakuten.source = source;
           result.rakuten.error = null;
-          if (result.rakuten.newListingCount === null && source === "IchibaItemSearch:JAN" && search.count > 0) {
-            result.rakuten.newListingCount = search.count;
+          if (result.rakuten.newListingCount === null && lastSearchCount > 0) {
+            result.rakuten.newListingCount = lastSearchCount;
           }
         } else {
           result.rakuten.error = productError
