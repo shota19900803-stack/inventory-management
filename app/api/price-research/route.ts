@@ -53,8 +53,8 @@ function rakutenOrigin(requestOrigin: string) {
 }
 
 // Rakuten's documented per-application limit is 1 request/second.
-// A single JAN research can call Product Search and Item Search, so enforce
-// a small gap between calls instead of accidentally generating HTTP 429s.
+// Keep a safety gap between API calls. Most successful JAN lookups use only
+// Product Search, so a normal lookup now consumes just one Rakuten request.
 const RAKUTEN_MIN_INTERVAL_MS = 1200;
 let lastRakutenRequestAt = 0;
 
@@ -190,57 +190,71 @@ export async function GET(request: NextRequest) {
     let product: any = null;
     let productError: string | null = null;
 
-    // Product Search is the best source for true new-only minimum/listing count.
-    // It is a soft dependency: 403 here must not block Item Search.
+    // Product Search is the preferred path because it can return the true
+    // new-only minimum, new listing count, and Product Price Navi URL in one request.
     try {
       product = await rakutenProductLookup(appId, accessKey, jan, origin, result.rakuten.debug);
       result.rakuten.newListingCount = product.newListingCount;
       result.rakuten.priceNaviUrl = product.productUrl;
       result.rakuten.productUrl = product.productUrl;
+
+      // If Product Search already has the new-only price, stop here.
+      // This avoids an unnecessary second request and keeps us safely under
+      // Rakuten's per-application request limit.
+      if (product.newLowestPrice !== null) {
+        result.rakuten.available = true;
+        result.rakuten.lowestPrice = product.newLowestPrice;
+        result.rakuten.source = "ProductSearch:new-only";
+        result.rakuten.error = null;
+      }
     } catch (error: any) {
       productError = error?.name === "AbortError"
         ? "楽天Product APIが8秒以内に応答しませんでした。"
         : error?.message || "楽天Product APIへの接続に失敗しました。";
     }
 
-    try {
-      let search = await rakutenItemSearch(appId, accessKey, jan, origin, result.rakuten.debug);
-      let items = search.items;
-      let chosen = chooseLowestNew(items, jan);
-      let source = "IchibaItemSearch:JAN";
+    // Only fall back to Item Search when Product Search could not supply a
+    // usable new-only price. This is deliberately a fallback, not the normal path.
+    if (!result.rakuten.available) {
+      try {
+        let search = await rakutenItemSearch(appId, accessKey, jan, origin, result.rakuten.debug);
+        let items = search.items;
+        let chosen = chooseLowestNew(items, jan);
+        let source = "IchibaItemSearch:JAN";
 
-      if (!chosen && product) {
-        const queries = compactQueries(product.productName, product.productNo, product.brandName);
-        for (const query of queries) {
-          search = await rakutenItemSearch(appId, accessKey, query, origin, result.rakuten.debug);
-          items = search.items;
-          chosen = chooseLowestNew(items, jan);
-          if (chosen) {
-            source = `IchibaItemSearch:${query}`;
-            break;
+        if (!chosen && product) {
+          const queries = compactQueries(product.productName, product.productNo, product.brandName);
+          for (const query of queries) {
+            search = await rakutenItemSearch(appId, accessKey, query, origin, result.rakuten.debug);
+            items = search.items;
+            chosen = chooseLowestNew(items, jan);
+            if (chosen) {
+              source = `IchibaItemSearch:${query}`;
+              break;
+            }
           }
         }
-      }
 
-      if (chosen || product?.newLowestPrice !== null) {
-        result.rakuten.available = true;
-        result.rakuten.lowestPrice = product?.newLowestPrice ?? chosen?.price ?? null;
-        result.rakuten.items = chosen ? [chosen] : [];
-        result.rakuten.source = product?.newLowestPrice !== null ? "ProductSearch:new-only" : source;
-        result.rakuten.error = null;
-        if (result.rakuten.newListingCount === null && source === "IchibaItemSearch:JAN" && search.count > 0) {
-          result.rakuten.newListingCount = search.count;
+        if (chosen) {
+          result.rakuten.available = true;
+          result.rakuten.lowestPrice = chosen.price;
+          result.rakuten.items = [chosen];
+          result.rakuten.source = source;
+          result.rakuten.error = null;
+          if (result.rakuten.newListingCount === null && source === "IchibaItemSearch:JAN" && search.count > 0) {
+            result.rakuten.newListingCount = search.count;
+          }
+        } else {
+          result.rakuten.error = productError
+            ? `${productError}／楽天市場の商品検索でも新品価格を確認できませんでした。`
+            : "楽天市場の商品検索は成功しましたが、新品として採用できる価格商品が見つかりませんでした。";
         }
-      } else {
-        result.rakuten.error = productError
-          ? `${productError}／楽天市場の商品検索でも新品価格を確認できませんでした。`
-          : "楽天市場の商品検索は成功しましたが、新品として採用できる価格商品が見つかりませんでした。";
+      } catch (error: any) {
+        const itemError = error?.name === "AbortError"
+          ? "楽天市場Item APIが8秒以内に応答しませんでした。"
+          : error?.message || "楽天市場Item APIへの接続に失敗しました。";
+        result.rakuten.error = productError ? `${productError}／${itemError}` : itemError;
       }
-    } catch (error: any) {
-      const itemError = error?.name === "AbortError"
-        ? "楽天市場Item APIが8秒以内に応答しませんでした。"
-        : error?.message || "楽天市場Item APIへの接続に失敗しました。";
-      result.rakuten.error = productError ? `${productError}／${itemError}` : itemError;
     }
   } else {
     result.rakuten.error = "楽天APIの環境変数が未設定です。";
