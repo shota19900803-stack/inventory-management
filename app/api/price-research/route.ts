@@ -41,7 +41,11 @@ async function fetchJson(url: URL, accessKey: string, timeoutMs = 8000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(url, { cache: "no-store", signal: controller.signal, headers: { accessKey } });
+    const response = await fetch(url, {
+      cache: "no-store",
+      signal: controller.signal,
+      headers: { accessKey },
+    });
     const text = await response.text();
     let data: any = {};
     try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text.slice(0, 500) }; }
@@ -69,7 +73,7 @@ async function rakutenItemSearch(applicationId: string, accessKey: string, keywo
   const items = Array.isArray(data?.items) ? data.items : [];
   debug.push({ api: "IchibaItemSearch", keyword, status: response.status, count: Number(data?.count ?? items.length) });
   if (!response.ok) throw new Error(data?.error_description || data?.error || `楽天市場API HTTP ${response.status}`);
-  return items;
+  return { items, count: Number(data?.count ?? items.length) };
 }
 
 async function rakutenProductLookup(applicationId: string, accessKey: string, jan: string, debug: any[]) {
@@ -108,7 +112,9 @@ function chooseLowestNew(items: any[], jan: string) {
     .filter((item) => item.price !== null)
     .filter((item) => !isExcludedNewCondition(item));
   const janDigits = normalize(jan);
-  const exactJan = candidates.filter((item) => normalize(`${item.name ?? ""} ${item.itemCode ?? ""} ${item.caption ?? ""}`).includes(janDigits));
+  const exactJan = candidates.filter((item) =>
+    normalize(`${item.name ?? ""} ${item.itemCode ?? ""} ${item.caption ?? ""}`).includes(janDigits),
+  );
   const pool = exactJan.length > 0 ? exactJan : candidates;
   pool.sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity));
   return pool[0] ?? null;
@@ -131,7 +137,13 @@ export async function GET(request: NextRequest) {
       source: null,
       debug: [],
     },
-    amazon: { available: false, lowestPrice: null, items: [], error: null, productUrl: `https://www.amazon.co.jp/s?k=${jan}` },
+    amazon: {
+      available: false,
+      lowestPrice: null,
+      items: [],
+      error: null,
+      productUrl: `https://www.amazon.co.jp/s?k=${jan}`,
+    },
     price2alert: `https://price2alert.com/search?i=All&kwd=${jan}`,
   };
 
@@ -139,20 +151,35 @@ export async function GET(request: NextRequest) {
   const accessKey = process.env.RAKUTEN_ACCESS_KEY;
 
   if (appId && accessKey) {
+    let product: any = null;
+    let productError: string | null = null;
+
+    // Product Search is the best source for the true new-only minimum and listing count.
+    // However, a Product API permission/403 must NOT block the normal Item Search fallback.
     try {
-      // Resolve the JAN first. This gives us Rakuten's product-level new-listing count and price-navi URL.
-      const product = await rakutenProductLookup(appId, accessKey, jan, result.rakuten.debug);
+      product = await rakutenProductLookup(appId, accessKey, jan, result.rakuten.debug);
       result.rakuten.newListingCount = product.newListingCount;
       result.rakuten.priceNaviUrl = product.productUrl;
       result.rakuten.productUrl = product.productUrl;
-      let items = await rakutenItemSearch(appId, accessKey, jan, result.rakuten.debug);
+    } catch (error: any) {
+      productError = error?.name === "AbortError"
+        ? "楽天Product APIが8秒以内に応答しませんでした。"
+        : error?.message || "楽天Product APIへの接続に失敗しました。";
+      // Continue to Ichiba Item Search. This is intentionally a soft failure.
+    }
+
+    try {
+      let search = await rakutenItemSearch(appId, accessKey, jan, result.rakuten.debug);
+      let items = search.items;
       let chosen = chooseLowestNew(items, jan);
       let source = "IchibaItemSearch:JAN";
 
-      if (!chosen) {
+      // If JAN search returns no usable item, use product metadata when Product Search worked.
+      if (!chosen && product) {
         const queries = compactQueries(product.productName, product.productNo, product.brandName);
         for (const query of queries) {
-          items = await rakutenItemSearch(appId, accessKey, query, result.rakuten.debug);
+          search = await rakutenItemSearch(appId, accessKey, query, result.rakuten.debug);
+          items = search.items;
           chosen = chooseLowestNew(items, jan);
           if (chosen) {
             source = `IchibaItemSearch:${query}`;
@@ -161,24 +188,47 @@ export async function GET(request: NextRequest) {
         }
       }
 
-      // Prefer the Product API's new-only minimum when it is available, while keeping
-      // the actual marketplace item for shop/URL context.
-      if (chosen || product.newLowestPrice !== null) {
+      if (chosen || product?.newLowestPrice !== null) {
         result.rakuten.available = true;
-        result.rakuten.lowestPrice = product.newLowestPrice ?? chosen?.price ?? null;
+        result.rakuten.lowestPrice = product?.newLowestPrice ?? chosen?.price ?? null;
         result.rakuten.items = chosen ? [chosen] : [];
-        result.rakuten.source = source;
+        result.rakuten.source = product?.newLowestPrice !== null
+          ? "ProductSearch:new-only"
+          : source;
+
+        // Product API may be blocked while Item Search still works. In that case,
+        // keep the usable marketplace price instead of showing a misleading error.
+        if (productError) {
+          result.rakuten.error = null;
+        }
+
+        // Item Search returns the total matching count. It is only used as a fallback
+        // listing count when Product Search could not provide its new-only count.
+        if (result.rakuten.newListingCount === null && source === "IchibaItemSearch:JAN" && search.count > 0) {
+          result.rakuten.newListingCount = search.count;
+        }
       } else {
-        result.rakuten.error = "楽天市場の商品検索は成功しましたが、新品として採用できる価格商品が見つかりませんでした。";
+        result.rakuten.error = productError
+          ? `${productError}／楽天市場の商品検索でも新品価格を確認できませんでした。`
+          : "楽天市場の商品検索は成功しましたが、新品として採用できる価格商品が見つかりませんでした。";
       }
     } catch (error: any) {
-      result.rakuten.error = error?.name === "AbortError" ? "楽天APIが8秒以内に応答しませんでした。" : error?.message || "楽天APIへの接続に失敗しました。";
+      const itemError = error?.name === "AbortError"
+        ? "楽天市場Item APIが8秒以内に応答しませんでした。"
+        : error?.message || "楽天市場Item APIへの接続に失敗しました。";
+      result.rakuten.error = productError
+        ? `${productError}／${itemError}`
+        : itemError;
     }
   } else {
     result.rakuten.error = "楽天APIの環境変数が未設定です。";
   }
 
-  const amazonConfigured = Boolean(process.env.AMAZON_CREDENTIAL_ID && process.env.AMAZON_CREDENTIAL_SECRET && process.env.AMAZON_REFRESH_TOKEN);
+  const amazonConfigured = Boolean(
+    process.env.AMAZON_CREDENTIAL_ID &&
+    process.env.AMAZON_CREDENTIAL_SECRET &&
+    process.env.AMAZON_REFRESH_TOKEN,
+  );
   result.amazon.error = amazonConfigured
     ? "Amazon Creators API接続準備済み。認証情報を設定後、公式APIのOffer情報を取得します。"
     : "Amazon Creators APIの認証情報が未設定です。現在はAmazonの商品ページへのリンクを表示できます。";
