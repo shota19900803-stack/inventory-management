@@ -52,7 +52,22 @@ function rakutenOrigin(requestOrigin: string) {
   return requestOrigin.replace(/\/$/, "");
 }
 
+// Rakuten's documented per-application limit is 1 request/second.
+// A single JAN research can call Product Search and Item Search, so enforce
+// a small gap between calls instead of accidentally generating HTTP 429s.
+const RAKUTEN_MIN_INTERVAL_MS = 1200;
+let lastRakutenRequestAt = 0;
+
+async function waitForRakutenSlot() {
+  const now = Date.now();
+  const waitMs = Math.max(0, RAKUTEN_MIN_INTERVAL_MS - (now - lastRakutenRequestAt));
+  if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
+  lastRakutenRequestAt = Date.now();
+}
+
 async function fetchJson(url: URL, accessKey: string, origin: string, timeoutMs = 8000) {
+  await waitForRakutenSlot();
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
