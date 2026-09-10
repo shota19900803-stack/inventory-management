@@ -92,65 +92,56 @@ function buildIdentityQuery(product: any, requestedName: string, requestedModel:
   if (productName) return productName.replace(/[\s　]+/g, " ").slice(0, 90);
   const brand = String(requestedBrand || product?.brandName || product?.makerName || "").trim();
   if (brand.length >= 2) return brand.slice(0, 60);
-
-  // Rakuten may know the product but leave productName/productNo/brandName null.
-  // productCaption often still contains the product title/model, so use only the
-  // first short phrase rather than the whole description (which would over-filter
-  // the Item Search AND query).
   const caption = String(product?.productCaption || "").replace(/[\r\n]+/g, " ").replace(/[\s　]+/g, " ").trim();
   if (caption) {
     const firstPhrase = caption.split(/[。.!！?？]/)[0].trim();
     if (firstPhrase.length >= 3) return firstPhrase.slice(0, 90);
   }
-
-  // Product Search can return a valid product record without identifying text.
-  // The exact JAN remains the strongest identity signal available to us.
   return jan;
+}
+
+function toItemView(item: any, jan: string) {
+  const titleText = `${item?.itemName ?? ""} ${item?.catchcopy ?? ""}`;
+  const captionText = String(item?.itemCaption ?? "");
+  const normalized = normalize(`${titleText} ${captionText}`);
+  const usedHint = ["中古", "中古品", "ジャンク", "訳あり", "アウトレット", "展示品", "リファービッシュ", "修理品", "整備済", "used", "junk", "refurbished", "開封済", "開封品", "箱なし", "欠品あり", "欠品有り", "部品取り"].some((word) => normalized.includes(normalize(word)));
+  return {
+    name: item?.itemName ?? null,
+    price: asPrice(item?.itemPrice),
+    shopName: item?.shopName ?? null,
+    itemUrl: item?.itemUrl ?? null,
+    shopUrl: item?.shopUrl ?? null,
+    itemCode: item?.itemCode ?? null,
+    catchcopy: item?.catchcopy ?? null,
+    itemCaption: item?.itemCaption ?? null,
+    caption: item?.catchcopy ?? item?.itemCaption ?? null,
+    conditionHint: usedHint ? "中古・状態注意候補" : "新品候補（API上の正式な状態保証ではありません）",
+    janMatched: normalize(`${item?.itemName ?? ""} ${item?.catchcopy ?? ""} ${item?.itemCaption ?? ""} ${item?.itemCode ?? ""}`).includes(normalize(jan)),
+  };
 }
 
 function chooseLowestNew(items: any[], jan: string, identityQuery: string) {
   const janDigits = normalize(jan);
   const exactJanSearch = normalize(identityQuery) === janDigits;
   const queryTokens = identityQuery.split(/[\s　]+/).map(normalize).filter((v) => v.length >= 2);
-
   const candidates = items.map((item) => {
     const title = normalize(`${item?.itemName ?? ""} ${item?.catchcopy ?? ""}`);
     const body = normalize(`${title} ${item?.itemCaption ?? ""} ${item?.itemCode ?? ""}`);
     const hasJan = body.includes(janDigits);
     const tokenHits = queryTokens.filter((token) => title.includes(token)).length;
     const score = (hasJan ? 1000 : 0) + tokenHits * 20;
-    return {
-      name: item?.itemName ?? null,
-      price: asPrice(item?.itemPrice),
-      shopName: item?.shopName ?? null,
-      itemUrl: item?.itemUrl ?? null,
-      shopUrl: item?.shopUrl ?? null,
-      itemCode: item?.itemCode ?? null,
-      catchcopy: item?.catchcopy ?? null,
-      itemCaption: item?.itemCaption ?? null,
-      caption: item?.catchcopy ?? item?.itemCaption ?? null,
-      score,
-      hasJan,
-      tokenHits,
-      excluded: isExcludedNewCondition(item),
-    };
+    return { ...toItemView(item, jan), score, hasJan, tokenHits, excluded: isExcludedNewCondition(item) };
   }).filter((item) => item.price !== null && !item.excluded);
-
   if (!candidates.length) return null;
-
-  // Exact JAN search is already the strongest identity signal. Rakuten listings
-  // do not always echo the JAN in itemName/itemCode, so don't require textual JAN here.
   if (exactJanSearch) {
     candidates.sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity));
     return candidates[0];
   }
-
   const exactJan = candidates.filter((item) => item.hasJan);
   if (exactJan.length) {
     exactJan.sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity));
     return exactJan[0];
   }
-
   const relevant = candidates.filter((item) => item.tokenHits > 0);
   if (!relevant.length) return null;
   relevant.sort((a, b) => b.score - a.score || (a.price ?? Infinity) - (b.price ?? Infinity));
@@ -168,7 +159,26 @@ export async function GET(request: NextRequest) {
 
   const result: any = {
     jan,
-    rakuten: { available: false, lowestPrice: null, newListingCount: null, items: [], priceNaviUrl: null, productUrl: null, error: null, source: null, debug: [] },
+    rakuten: {
+      available: false,
+      lowestPrice: null,
+      newListingCount: null,
+      items: [],
+      priceNaviUrl: null,
+      productUrl: null,
+      error: null,
+      source: null,
+      debug: [],
+      // Diagnostic snapshot: these are the exact Product Search fields Rakuten exposes.
+      allListingCount: null,
+      allAvailableCount: null,
+      allMinPrice: null,
+      newOnlyListingCount: null,
+      newOnlyAvailableCount: null,
+      newOnlyMinPrice: null,
+      usedExcludedMinPrice: null,
+      identityQuery: null,
+    },
     amazon: { available: false, lowestPrice: null, items: [], error: null, productUrl: `https://www.amazon.co.jp/s?k=${jan}` },
     price2alert: `https://price2alert.com/search?i=All&kwd=${jan}`,
   };
@@ -180,13 +190,25 @@ export async function GET(request: NextRequest) {
   if (appId && accessKey) {
     let product: any = null;
     let productError: string | null = null;
+    let identityQuery = jan;
 
     try {
       product = await rakutenProductSearch(appId, accessKey, jan, origin, result.rakuten.debug);
       if (product) {
-        result.rakuten.newListingCount = Number.isFinite(Number(product.usedExcludeSalesItemCount)) ? Number(product.usedExcludeSalesItemCount) : null;
+        result.rakuten.allListingCount = asPrice(product.itemCount);
+        result.rakuten.allAvailableCount = asPrice(product.salesItemCount);
+        result.rakuten.allMinPrice = asPrice(product.minPrice);
+        result.rakuten.newOnlyListingCount = asPrice(product.usedExcludeCount);
+        result.rakuten.newOnlyAvailableCount = asPrice(product.usedExcludeSalesItemCount);
+        result.rakuten.newOnlyMinPrice = asPrice(product.usedExcludeMinPrice);
+        result.rakuten.usedExcludedMinPrice = asPrice(product.usedExcludeSalesMinPrice);
+        result.rakuten.newListingCount = result.rakuten.newOnlyAvailableCount;
         result.rakuten.priceNaviUrl = product.productUrlPC ?? product.productUrlMobile ?? product.searchUrl ?? null;
         result.rakuten.productUrl = result.rakuten.priceNaviUrl;
+        identityQuery = buildIdentityQuery(product, requestedName, requestedModel, requestedBrand, jan);
+        result.rakuten.identityQuery = identityQuery;
+        // For this diagnostic pass, do not trust the old heuristic as the primary
+        // source. If Rakuten itself exposes a new-only minimum, use it directly.
         const newPrice = asPrice(product.usedExcludeSalesMinPrice);
         if (newPrice !== null) {
           result.rakuten.available = true;
@@ -198,25 +220,34 @@ export async function GET(request: NextRequest) {
       productError = error?.name === "AbortError" ? "楽天Product APIが8秒以内に応答しませんでした。" : error?.message || "楽天Product APIへの接続に失敗しました。";
     }
 
-    if (!result.rakuten.available && !productError) {
+    // Always make the second call during this diagnostic phase. We want to see
+    // whether Item Search still exposes a mixed new/used list after the Rakuten
+    // API change, even when Product Search already returned a new-only price.
+    if (!productError) {
       try {
-        const identityQuery = buildIdentityQuery(product, requestedName, requestedModel, requestedBrand, jan);
         const search = await rakutenItemSearch(appId, accessKey, identityQuery, origin, result.rakuten.debug);
-        const chosen = chooseLowestNew(search.items, jan, identityQuery);
-        if (chosen) {
-          result.rakuten.available = true;
-          result.rakuten.lowestPrice = chosen.price;
-          result.rakuten.items = [chosen];
-          result.rakuten.source = `IchibaItemSearch:${identityQuery}`;
-          result.rakuten.error = null;
-        } else {
-          result.rakuten.error = "楽天市場の商品検索は成功しましたが、新品として採用できる価格商品が見つかりませんでした。";
+        const views = search.items.map((item: any) => toItemView(item, jan)).filter((item: any) => item.price !== null).slice(0, 10);
+        result.rakuten.items = views;
+
+        if (!result.rakuten.available) {
+          const chosen = chooseLowestNew(search.items, jan, identityQuery);
+          if (chosen) {
+            result.rakuten.available = true;
+            result.rakuten.lowestPrice = chosen.price;
+            result.rakuten.source = `IchibaItemSearch:${identityQuery}`;
+          }
+        }
+
+        if (!result.rakuten.available) {
+          const allMin = result.rakuten.allMinPrice != null ? `全体最安 ${result.rakuten.allMinPrice.toLocaleString()}円` : "全体最安 取得不可";
+          const newMin = result.rakuten.usedExcludedMinPrice != null ? `新品除外最安 ${result.rakuten.usedExcludedMinPrice.toLocaleString()}円` : "新品除外最安 取得不可";
+          result.rakuten.error = `診断中：${allMin} / ${newMin} / Item Search ${views.length}件。新品・中古の状態判定は別途確認します。`;
         }
       } catch (error: any) {
         const itemError = error?.name === "AbortError" ? "楽天市場Item APIが8秒以内に応答しませんでした。" : error?.message || "楽天市場Item APIへの接続に失敗しました。";
-        result.rakuten.error = itemError;
+        result.rakuten.error = result.rakuten.available ? null : itemError;
       }
-    } else if (!result.rakuten.available && productError) {
+    } else if (!result.rakuten.available) {
       result.rakuten.error = productError;
     }
   } else {
