@@ -22,9 +22,6 @@ function rakutenOrigin(requestOrigin: string) {
   return requestOrigin.replace(/\/$/, "");
 }
 
-// Rakuten recommends roughly 1 request/sec or less per application.
-// This route intentionally performs at most TWO Rakuten API calls per lookup:
-// Product Search (JAN) -> Item Search (exact product identity).
 const RAKUTEN_MIN_INTERVAL_MS = 1200;
 let lastRakutenRequestAt = 0;
 async function waitForRakutenSlot() {
@@ -88,25 +85,21 @@ async function rakutenItemSearch(applicationId: string, accessKey: string, keywo
   return { items, count: Number(data?.count ?? items.length) };
 }
 
-function buildIdentityQuery(product: any, requestedName: string, requestedModel: string, requestedBrand: string) {
-  // Prefer the exact model/product number. It is much safer than a long Japanese title.
+function buildIdentityQuery(product: any, requestedName: string, requestedModel: string, requestedBrand: string, jan: string) {
   const model = String(requestedModel || product?.productNo || "").trim();
   if (model.length >= 3) return model.slice(0, 80);
-
   const productName = String(requestedName || product?.productName || "").trim();
-  if (productName) {
-    const compact = productName.replace(/[\s　]+/g, " ");
-    // Keep a useful, bounded identity phrase. Rakuten Item Search treats the
-    // keyword as the product search signal; avoid issuing several exploratory calls.
-    return compact.slice(0, 90);
-  }
-
+  if (productName) return productName.replace(/[\s　]+/g, " ").slice(0, 90);
   const brand = String(requestedBrand || product?.brandName || product?.makerName || "").trim();
-  return brand.slice(0, 60);
+  if (brand.length >= 2) return brand.slice(0, 60);
+  // Product Search can return a valid product record without productName/productNo.
+  // The exact JAN remains the strongest identity signal, so use it as the Item Search keyword.
+  return jan;
 }
 
 function chooseLowestNew(items: any[], jan: string, identityQuery: string) {
   const janDigits = normalize(jan);
+  const exactJanSearch = normalize(identityQuery) === janDigits;
   const queryTokens = identityQuery.split(/[\s　]+/).map(normalize).filter((v) => v.length >= 2);
 
   const candidates = items.map((item) => {
@@ -134,15 +127,19 @@ function chooseLowestNew(items: any[], jan: string, identityQuery: string) {
 
   if (!candidates.length) return null;
 
-  // If JAN appears in an item result, it is the strongest possible match.
+  // Exact JAN search is already the strongest identity signal. Rakuten listings
+  // do not always echo the JAN in itemName/itemCode, so don't require textual JAN here.
+  if (exactJanSearch) {
+    candidates.sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity));
+    return candidates[0];
+  }
+
   const exactJan = candidates.filter((item) => item.hasJan);
   if (exactJan.length) {
     exactJan.sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity));
     return exactJan[0];
   }
 
-  // Otherwise require at least one identity token. This avoids returning a
-  // random cheap item when the JAN is absent from the listing text.
   const relevant = candidates.filter((item) => item.tokenHits > 0);
   if (!relevant.length) return null;
   relevant.sort((a, b) => b.score - a.score || (a.price ?? Infinity) - (b.price ?? Infinity));
@@ -179,7 +176,6 @@ export async function GET(request: NextRequest) {
         result.rakuten.newListingCount = Number.isFinite(Number(product.usedExcludeSalesItemCount)) ? Number(product.usedExcludeSalesItemCount) : null;
         result.rakuten.priceNaviUrl = product.productUrlPC ?? product.productUrlMobile ?? product.searchUrl ?? null;
         result.rakuten.productUrl = result.rakuten.priceNaviUrl;
-
         const newPrice = asPrice(product.usedExcludeSalesMinPrice);
         if (newPrice !== null) {
           result.rakuten.available = true;
@@ -191,26 +187,19 @@ export async function GET(request: NextRequest) {
       productError = error?.name === "AbortError" ? "楽天Product APIが8秒以内に応答しませんでした。" : error?.message || "楽天Product APIへの接続に失敗しました。";
     }
 
-    // If Product Search has no usable new-only price, make exactly ONE Item Search
-    // using the strongest identity available. This replaces the previous loop of
-    // many exploratory searches that could trigger Rakuten HTTP 429.
     if (!result.rakuten.available && !productError) {
       try {
-        const identityQuery = buildIdentityQuery(product, requestedName, requestedModel, requestedBrand);
-        if (identityQuery.length >= 2) {
-          const search = await rakutenItemSearch(appId, accessKey, identityQuery, origin, result.rakuten.debug);
-          const chosen = chooseLowestNew(search.items, jan, identityQuery);
-          if (chosen) {
-            result.rakuten.available = true;
-            result.rakuten.lowestPrice = chosen.price;
-            result.rakuten.items = [chosen];
-            result.rakuten.source = `IchibaItemSearch:${identityQuery}`;
-            result.rakuten.error = null;
-          } else {
-            result.rakuten.error = "楽天市場の商品検索は成功しましたが、新品として採用できる価格商品が見つかりませんでした。";
-          }
+        const identityQuery = buildIdentityQuery(product, requestedName, requestedModel, requestedBrand, jan);
+        const search = await rakutenItemSearch(appId, accessKey, identityQuery, origin, result.rakuten.debug);
+        const chosen = chooseLowestNew(search.items, jan, identityQuery);
+        if (chosen) {
+          result.rakuten.available = true;
+          result.rakuten.lowestPrice = chosen.price;
+          result.rakuten.items = [chosen];
+          result.rakuten.source = `IchibaItemSearch:${identityQuery}`;
+          result.rakuten.error = null;
         } else {
-          result.rakuten.error = "楽天市場の商品情報は取得できましたが、商品名・型番を特定できませんでした。";
+          result.rakuten.error = "楽天市場の商品検索は成功しましたが、新品として採用できる価格商品が見つかりませんでした。";
         }
       } catch (error: any) {
         const itemError = error?.name === "AbortError" ? "楽天市場Item APIが8秒以内に応答しませんでした。" : error?.message || "楽天市場Item APIへの接続に失敗しました。";
