@@ -5,9 +5,8 @@ function asPrice(value: unknown) { const n = Number(value); return Number.isFini
 function normalize(value: unknown) { return String(value ?? "").normalize("NFKC").toLowerCase().replace(/[\s　\-‐‑–—_/・:：,.，。()（）［］【】「」『』]/g, ""); }
 
 function isExcludedNewCondition(item: any) {
-  // Do not inspect the full description for generic words such as 「パーツ」「部品」.
-  // New model kits legitimately mention parts in their product descriptions, which
-  // previously caused every valid listing to be rejected as non-new.
+  // Generic words such as 「パーツ」「部品」 are NOT used as exclusion signals.
+  // New products commonly mention parts/components in their descriptions.
   const titleText = normalize(`${item?.itemName ?? ""} ${item?.catchcopy ?? ""}`);
   const captionText = normalize(item?.itemCaption ?? "");
   const titleExcluded = ["中古", "中古品", "ジャンク", "訳あり", "アウトレット", "展示品", "リファービッシュ", "修理品", "整備済", "used", "junk", "refurbished"];
@@ -97,16 +96,43 @@ async function rakutenItemSearch(applicationId: string, accessKey: string, keywo
   return { items, count: Number(data?.count ?? items.length) };
 }
 
-function chooseLowestNew(items: any[], jan: string, hints: string[]) {
-  const janDigits = normalize(jan); const normalizedHints = hints.map(normalize).filter((v) => v.length >= 3);
+function chooseLowestNew(items: any[], jan: string, hints: string[], exactJanSearch: boolean) {
+  const janDigits = normalize(jan);
+  const normalizedHints = hints.map(normalize).filter((v) => v.length >= 3);
   const candidates = items.map((item) => {
     const text = normalize(`${item?.itemName ?? ""} ${item?.catchcopy ?? ""} ${item?.itemCaption ?? ""} ${item?.itemCode ?? ""}`);
-    let score = text.includes(janDigits) ? 1000 : 0;
+    const hasJan = text.includes(janDigits);
+    let score = hasJan ? 1000 : 0;
     for (const hint of normalizedHints) if (text.includes(hint)) score += hint.length >= 6 ? 20 : 8;
-    return { name: item?.itemName ?? null, price: asPrice(item?.itemPrice), shopName: item?.shopName ?? null, itemUrl: item?.itemUrl ?? null, shopUrl: item?.shopUrl ?? null, itemCode: item?.itemCode ?? null, catchcopy: item?.catchcopy ?? null, itemCaption: item?.itemCaption ?? null, caption: item?.catchcopy ?? item?.itemCaption ?? null, score, excluded: isExcludedNewCondition(item) };
+    return {
+      name: item?.itemName ?? null,
+      price: asPrice(item?.itemPrice),
+      shopName: item?.shopName ?? null,
+      itemUrl: item?.itemUrl ?? null,
+      shopUrl: item?.shopUrl ?? null,
+      itemCode: item?.itemCode ?? null,
+      catchcopy: item?.catchcopy ?? null,
+      itemCaption: item?.itemCaption ?? null,
+      caption: item?.catchcopy ?? item?.itemCaption ?? null,
+      score,
+      hasJan,
+      excluded: isExcludedNewCondition(item),
+    };
   }).filter((item) => item.price !== null && !item.excluded);
+
   if (!candidates.length) return null;
-  const exactJan = candidates.filter((item) => normalize(`${item.name ?? ""} ${item.itemCode ?? ""} ${item.caption ?? ""}`).includes(janDigits));
+
+  // When the API query itself is the exact 13-digit JAN, the query is already
+  // the strongest product identity signal. Rakuten item results do not always
+  // echo the JAN in itemName/itemCode, so requiring a textual JAN match here
+  // incorrectly rejected valid listings. Trust the exact-JAN search and only
+  // apply the new-condition filter.
+  if (exactJanSearch) {
+    candidates.sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity));
+    return candidates[0];
+  }
+
+  const exactJan = candidates.filter((item) => item.hasJan);
   const pool = exactJan.length ? exactJan : candidates.filter((item) => item.score > 0);
   if (!pool.length) return null;
   pool.sort((a, b) => b.score - a.score || (a.price ?? Infinity) - (b.price ?? Infinity));
@@ -153,13 +179,18 @@ export async function GET(request: NextRequest) {
         let chosen: any = null; let chosenQuery = "";
         for (const query of [...new Set(queries)]) {
           if (!query) continue;
-          const hints = query === jan ? [] : [query, ...built.hints];
+          const exactJanSearch = query === jan;
+          const hints = exactJanSearch ? [] : [query, ...built.hints];
           const search = await rakutenItemSearch(appId, accessKey, query, origin, result.rakuten.debug);
-          const candidate = chooseLowestNew(search.items, jan, hints);
+          const candidate = chooseLowestNew(search.items, jan, hints, exactJanSearch);
           if (candidate) { chosen = candidate; chosenQuery = query; break; }
         }
         if (chosen) {
-          result.rakuten.available = true; result.rakuten.lowestPrice = chosen.price; result.rakuten.items = [chosen]; result.rakuten.source = `IchibaItemSearch:${chosenQuery}`; result.rakuten.error = null;
+          result.rakuten.available = true;
+          result.rakuten.lowestPrice = chosen.price;
+          result.rakuten.items = [chosen];
+          result.rakuten.source = `IchibaItemSearch:${chosenQuery}`;
+          result.rakuten.error = null;
         } else {
           result.rakuten.error = productError ? `${productError}／楽天市場の商品検索でも新品価格を確認できませんでした。` : "楽天市場の商品検索は成功しましたが、新品として採用できる価格商品が見つかりませんでした。";
         }
