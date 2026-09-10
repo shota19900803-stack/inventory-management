@@ -5,9 +5,14 @@ function asPrice(value: unknown) { const n = Number(value); return Number.isFini
 function normalize(value: unknown) { return String(value ?? "").normalize("NFKC").toLowerCase().replace(/[\s　\-‐‑–—_/・:：,.，。()（）［］【】「」『』]/g, ""); }
 
 function isExcludedNewCondition(item: any) {
-  const text = normalize(`${item?.itemName ?? ""} ${item?.catchcopy ?? ""} ${item?.itemCaption ?? ""}`);
-  const excluded = ["中古", "中古品", "ジャンク", "開封済", "開封品", "箱なし", "欠品", "部品", "パーツ", "訳あり", "アウトレット", "展示品", "リファービッシュ", "修理品", "整備済", "used", "junk", "refurbished"];
-  return excluded.some((word) => text.includes(normalize(word)));
+  // Do not inspect the full description for generic words such as 「パーツ」「部品」.
+  // New model kits legitimately mention parts in their product descriptions, which
+  // previously caused every valid listing to be rejected as non-new.
+  const titleText = normalize(`${item?.itemName ?? ""} ${item?.catchcopy ?? ""}`);
+  const captionText = normalize(item?.itemCaption ?? "");
+  const titleExcluded = ["中古", "中古品", "ジャンク", "訳あり", "アウトレット", "展示品", "リファービッシュ", "修理品", "整備済", "used", "junk", "refurbished"];
+  const conditionPhrases = ["開封済", "開封品", "箱なし", "欠品あり", "欠品有り", "部品取り"];
+  return titleExcluded.some((word) => titleText.includes(normalize(word))) || conditionPhrases.some((word) => captionText.includes(normalize(word)) || titleText.includes(normalize(word)));
 }
 
 function extractHints(productName: string | null, productNo: string | null, brandName: string | null, makerName: string | null) {
@@ -127,7 +132,6 @@ export async function GET(request: NextRequest) {
       }
     } catch (error: any) { productError = error?.name === "AbortError" ? "楽天Product APIが8秒以内に応答しませんでした。" : error?.message || "楽天Product APIへの接続に失敗しました。"; }
 
-    // The current Product Search API may return null metadata for a JAN. One keyword lookup is used only in that case.
     if (!result.rakuten.available && product && !product.productName && !product.productNo) {
       try {
         const keywordProduct = await rakutenProductSearch(appId, accessKey, { keyword: jan }, origin, result.rakuten.debug);
