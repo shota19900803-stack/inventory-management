@@ -92,8 +92,19 @@ function buildIdentityQuery(product: any, requestedName: string, requestedModel:
   if (productName) return productName.replace(/[\s　]+/g, " ").slice(0, 90);
   const brand = String(requestedBrand || product?.brandName || product?.makerName || "").trim();
   if (brand.length >= 2) return brand.slice(0, 60);
-  // Product Search can return a valid product record without productName/productNo.
-  // The exact JAN remains the strongest identity signal, so use it as the Item Search keyword.
+
+  // Rakuten may know the product but leave productName/productNo/brandName null.
+  // productCaption often still contains the product title/model, so use only the
+  // first short phrase rather than the whole description (which would over-filter
+  // the Item Search AND query).
+  const caption = String(product?.productCaption || "").replace(/[\r\n]+/g, " ").replace(/[\s　]+/g, " ").trim();
+  if (caption) {
+    const firstPhrase = caption.split(/[。.!！?？]/)[0].trim();
+    if (firstPhrase.length >= 3) return firstPhrase.slice(0, 90);
+  }
+
+  // Product Search can return a valid product record without identifying text.
+  // The exact JAN remains the strongest identity signal available to us.
   return jan;
 }
 
