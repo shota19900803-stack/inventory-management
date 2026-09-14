@@ -1,6 +1,5 @@
 import dynamic from "next/dynamic";
 import { Component, useEffect, useLayoutEffect } from "react";
-import { supabaseBrowser } from "../lib/supabase";
 import SalesShippingEnhancement from "../components/SalesShippingEnhancement";
 import QuickActions from "../components/QuickActions";
 import ManagementSnapshot from "../components/ManagementSnapshot";
@@ -31,7 +30,6 @@ export default function Home() {
   useIsoLayoutEffect(() => {
     let stopped = false;
     let observer: MutationObserver | null = null;
-    const supabase = supabaseBrowser;
 
     const hidePurchaseMarketCheck = () => {
       if (stopped) return;
@@ -46,62 +44,9 @@ export default function Home() {
       });
     };
 
-    const bindProductHistoryButtons = () => {
-      if (stopped) return;
-      const main = document.querySelector("main");
-      if (!main) return;
-      Array.from(main.querySelectorAll("button")).forEach((button) => {
-        const text = (button.textContent || "").replace(/\s/g, "").trim();
-        if (text !== "履歴") return;
-        if (button.getAttribute("data-product-history-bound") === "true") return;
-        button.setAttribute("data-product-history-bound", "true");
-        button.addEventListener("click", async (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          const row = button.closest("tr");
-          if (!row) return;
-          const cells = Array.from(row.querySelectorAll("td"));
-          const jan = (cells[1]?.textContent || "").replace(/\D/g, "");
-          const productName = (cells[0]?.querySelector("strong")?.textContent || "").trim();
-          button.disabled = true;
-          const originalText = button.textContent;
-          button.textContent = "読込中…";
-          try {
-            let productId: string | null = null;
-            if (jan.length === 13) {
-              const { data, error } = await supabase.from("products").select("id").eq("jan_code", jan).limit(1).maybeSingle();
-              if (error) throw error;
-              productId = data?.id ?? null;
-            }
-            if (!productId && productName) {
-              const { data, error } = await supabase.from("products").select("id").eq("name", productName).limit(1).maybeSingle();
-              if (error) throw error;
-              productId = data?.id ?? null;
-            }
-            if (!productId) {
-              alert("この商品の履歴を開けませんでした。商品情報を確認してください。");
-              return;
-            }
-            window.location.href = `/product-history?productId=${encodeURIComponent(productId)}`;
-          } catch (error) {
-            console.error("商品履歴への移動に失敗:", error);
-            alert("商品履歴を開けませんでした。もう一度お試しください。");
-          } finally {
-            button.disabled = false;
-            button.textContent = originalText || "履歴";
-          }
-        });
-      });
-    };
-
-    const run = () => {
-      hidePurchaseMarketCheck();
-      bindProductHistoryButtons();
-    };
-
-    run();
+    hidePurchaseMarketCheck();
     const root = document.querySelector("main") || document.body;
-    observer = new MutationObserver(run);
+    observer = new MutationObserver(hidePurchaseMarketCheck);
     observer.observe(root, { childList: true, subtree: true });
 
     return () => {
