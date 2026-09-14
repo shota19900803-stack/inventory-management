@@ -258,7 +258,6 @@ if (source.includes(purchaseUpdateMarker) && !source.includes('const { data: lat
         .update({ cost_price: Number(latestPurchaseCost?.unit_cost ?? 0) })
         .eq("id", original.product_id);
       if (costSyncError) throw costSyncError;`);
-  // The original line already had an immediately following `if (se) throw se;`.
   source = source.replace(`${purchaseUpdateReplacement}\n      if (se) throw se;\n      if (se) throw se;`, `${purchaseUpdateReplacement}\n      if (se) throw se;`);
   changed = true;
   console.log('Synced products.cost_price after purchase edit.');
@@ -345,7 +344,7 @@ const saleSummaryReplacement = `                <div
                     </strong>
                   </div>
                   <div style={{ marginTop: 6, fontSize: 13, color: "#6b7280" }}>
-                    原価 {yen(selectedSaleProduct?.cost_price ?? saleForm.unit_cost ?? 0)} ／ 販売後の在庫を確認してから登録できます。
+                    原価 {yen(Number(selectedSaleProduct?.cost_price ?? saleForm.unit_cost ?? 0))} ／ 販売後の在庫を確認してから登録できます。
                   </div>
                 </div>
 
@@ -362,7 +361,6 @@ if (source.includes(saleSummaryMarker) && !source.includes('在庫確認')) {
 // 商品選択時は、最新のproducts.cost_priceを原価欄へ反映する。
 const saleSelectOld = `unit_cost: product?.cost_price != null ? String(product.cost_price) : saleForm.unit_cost,`;
 const saleSelectNew = `unit_cost: product?.cost_price != null ? String(product.cost_price) : saleForm.unit_cost,`;
-// Keep this explicit marker for idempotency; the current assignment is already correct.
 if (source.includes(saleSelectOld) && !source.includes('// latest products.cost_price is used for new sales')) {
   source = source.replace(saleSelectOld, `${saleSelectNew}\n                          // latest products.cost_price is used for new sales`);
   changed = true;
