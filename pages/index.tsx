@@ -1,5 +1,6 @@
 import dynamic from "next/dynamic";
 import { Component, useEffect, useLayoutEffect } from "react";
+import { supabaseBrowser } from "../lib/supabase";
 import SalesShippingEnhancement from "../components/SalesShippingEnhancement";
 import QuickActions from "../components/QuickActions";
 import ManagementSnapshot from "../components/ManagementSnapshot";
@@ -38,14 +39,46 @@ export default function Home() {
 
       Array.from(main.querySelectorAll("button")).forEach((button) => {
         const text = (button.textContent || "").replace(/\s/g, "").trim();
-        if (text !== "相場チェック") return;
-        if (button.getAttribute("data-market-check-hidden") === "true") return;
-        button.style.display = "none";
-        button.setAttribute("data-market-check-hidden", "true");
+        if (text === "相場チェック") {
+          if (button.getAttribute("data-market-check-hidden") !== "true") {
+            button.style.display = "none";
+            button.setAttribute("data-market-check-hidden", "true");
+          }
+          return;
+        }
+
+        // 商品管理の「履歴」はDashboard内の全履歴表示と混ざらないよう、
+        // 選択した商品の専用履歴ページへ直接遷移させる。
+        // React側のonClickも先に実行させ、イベントは横取りしない。
+        if (text !== "履歴") return;
+        if (button.getAttribute("data-history-route-bound") === "true") return;
+        button.setAttribute("data-history-route-bound", "true");
+
+        button.addEventListener("click", async () => {
+          try {
+            const row = button.closest("tr");
+            if (!row) return;
+            const cells = Array.from(row.querySelectorAll("td"));
+            const productCell = cells[0];
+            const productName = (productCell?.textContent || "").trim();
+            if (!productName) return;
+
+            const { data: matches, error } = await supabaseBrowser
+              .from("products")
+              .select("id")
+              .eq("name", productName)
+              .limit(2);
+
+            if (error || !matches || matches.length !== 1) return;
+            window.location.href = `/product-history?productId=${encodeURIComponent(matches[0].id)}`;
+          } catch (error) {
+            console.error("商品履歴への遷移に失敗しました:", error);
+          }
+        });
       });
 
-      // 商品管理の「履歴」は一覧の下に描画されるため、クリック後に見える位置へ移動する。
-      // React側のonClickはそのまま使い、イベントを横取りしない。
+      // 商品管理の「履歴」は一覧の下にも描画されるため、クリック後に見える位置へ移動する。
+      // 直接遷移できない場合のDashboard内表示も従来どおり残す。
       const historySection = Array.from(main.querySelectorAll("section")).find((section) => {
         const heading = section.querySelector("h2");
         const text = (heading?.textContent || "").replace(/\s/g, "").trim();
