@@ -237,54 +237,26 @@ if (source.includes(formStateMarker) && !source.includes('const selectedPurchase
 }
 
 // 仕入単価を編集した後もproducts.cost_priceを最新の仕入単価へ同期する。
-// これにより売上登録画面の初期原価が古いまま残らない。
 const purchaseUpdateMarker = `      const { error: se } = await supabase.from("products").update({ stock_quantity: currentStock + delta }).eq("id", original.product_id);`;
-const purchaseUpdateReplacement = `      const { error: se } = await supabase.from("products").update({ stock_quantity: currentStock + delta }).eq("id", original.product_id);`;
-if (source.includes(purchaseUpdateMarker) && !source.includes('const { data: latestPurchaseCost } = await supabase.from("purchase_history")')) {
-  source = source.replace(purchaseUpdateMarker, `${purchaseUpdateReplacement}
-      if (se) throw se;
-
-      const { data: latestPurchaseCost, error: latestPurchaseCostError } = await supabase
-        .from("purchase_history")
-        .select("unit_cost")
-        .eq("product_id", original.product_id)
-        .order("purchase_date", { ascending: false })
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (latestPurchaseCostError) throw latestPurchaseCostError;
-      const { error: costSyncError } = await supabase
-        .from("products")
-        .update({ cost_price: Number(latestPurchaseCost?.unit_cost ?? 0) })
-        .eq("id", original.product_id);
-      if (costSyncError) throw costSyncError;`);
-  source = source.replace(`${purchaseUpdateReplacement}\n      if (se) throw se;\n      if (se) throw se;`, `${purchaseUpdateReplacement}\n      if (se) throw se;`);
-  changed = true;
-  console.log('Synced products.cost_price after purchase edit.');
-}
-
-// 仕入削除後も、残っている最新仕入単価をproducts.cost_priceへ同期する。
-const deleteStockMarker = `    const { error: se } = await supabase.from("products").update({ stock_quantity: currentStock - Number(purchase.quantity) }).eq("id", purchase.product_id);`;
-if (source.includes(deleteStockMarker) && !source.includes('const { data: latestPurchaseCostAfterDelete }')) {
-  source = source.replace(deleteStockMarker, `${deleteStockMarker}
-    if (se) throw se;
-    const { data: latestPurchaseCostAfterDelete, error: latestPurchaseCostAfterDeleteError } = await supabase
-      .from("purchase_history")
-      .select("unit_cost")
-      .eq("product_id", purchase.product_id)
-      .order("purchase_date", { ascending: false })
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (latestPurchaseCostAfterDeleteError) throw latestPurchaseCostAfterDeleteError;
-    const { error: costSyncAfterDeleteError } = await supabase
-      .from("products")
-      .update({ cost_price: Number(latestPurchaseCostAfterDelete?.unit_cost ?? 0) })
-      .eq("id", purchase.product_id);
-    if (costSyncAfterDeleteError) throw costSyncAfterDeleteError;`);
-  source = source.replace(`${deleteStockMarker}\n    if (se) throw se;\n    if (se) throw se;`, `${deleteStockMarker}\n    if (se) throw se;`);
-  changed = true;
-  console.log('Synced products.cost_price after purchase delete.');
+if (source.includes(purchaseUpdateMarker) && !source.includes('supabase.rpc("update_purchase"')) {
+  const purchaseEditPattern = /      const \{ error: ue \} = await supabase\.from\("purchase_history"\)\.update\([\s\S]*?      setEditingPurchaseId\(null\); setPurchaseForm\(initialPurchaseForm\); await loadAll\(\); return;/;
+  const purchaseEditReplacement = `      const { data, error } = await supabase.rpc("update_purchase", {
+        p_purchase_id: editingPurchaseId,
+        p_purchase_date: purchaseForm.purchase_date,
+        p_supplier: purchaseForm.supplier.trim() || null,
+        p_unit_cost: unitCost,
+        p_quantity: quantity,
+        p_notes: purchaseForm.notes.trim() || null,
+      });
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.message || "仕入の更新に失敗しました。");
+      setMessage("仕入を更新し、在庫・原価も調整しました。");
+      setEditingPurchaseId(null); setPurchaseForm(initialPurchaseForm); await loadAll(); return;`;
+  if (purchaseEditPattern.test(source)) {
+    source = source.replace(purchaseEditPattern, purchaseEditReplacement);
+    changed = true;
+    console.log('Switched purchase editing to atomic update_purchase RPC.');
+  }
 }
 
 // 仕入登録画面に「現在庫」「登録後在庫」「登録原価」を表示。
