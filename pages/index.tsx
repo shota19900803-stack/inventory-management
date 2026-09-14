@@ -31,10 +31,11 @@ export default function Home() {
     let stopped = false;
     let observer: MutationObserver | null = null;
 
-    const hidePurchaseMarketCheck = () => {
+    const enhanceDashboardUi = () => {
       if (stopped) return;
       const main = document.querySelector("main");
       if (!main) return;
+
       Array.from(main.querySelectorAll("button")).forEach((button) => {
         const text = (button.textContent || "").replace(/\s/g, "").trim();
         if (text !== "相場チェック") return;
@@ -42,11 +43,36 @@ export default function Home() {
         button.style.display = "none";
         button.setAttribute("data-market-check-hidden", "true");
       });
+
+      // 商品管理の「履歴」は一覧の下に描画されるため、クリック後に見える位置へ移動する。
+      // React側のonClickはそのまま使い、イベントを横取りしない。
+      const historySection = Array.from(main.querySelectorAll("section")).find((section) => {
+        const heading = section.querySelector("h2");
+        const text = (heading?.textContent || "").replace(/\s/g, "").trim();
+        return /の履歴$/.test(text);
+      }) as HTMLElement | undefined;
+
+      if (historySection) {
+        if (historySection.getAttribute("data-history-enhanced") !== "true") {
+          historySection.setAttribute("data-history-enhanced", "true");
+          historySection.style.position = "fixed";
+          historySection.style.left = "50%";
+          historySection.style.top = "24px";
+          historySection.style.transform = "translateX(-50%)";
+          historySection.style.width = "min(1100px, calc(100vw - 32px))";
+          historySection.style.maxHeight = "calc(100vh - 48px)";
+          historySection.style.overflow = "auto";
+          historySection.style.zIndex = "2000";
+          historySection.style.boxSizing = "border-box";
+          historySection.style.boxShadow = "0 24px 70px rgba(0,0,0,.28)";
+          historySection.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+      }
     };
 
-    hidePurchaseMarketCheck();
+    enhanceDashboardUi();
     const root = document.querySelector("main") || document.body;
-    observer = new MutationObserver(hidePurchaseMarketCheck);
+    observer = new MutationObserver(enhanceDashboardUi);
     observer.observe(root, { childList: true, subtree: true });
 
     return () => {
