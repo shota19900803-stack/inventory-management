@@ -110,6 +110,98 @@ if (source.includes(oldTableWidth)) {
   console.log('Removed oversized min-width from recent-sales table.');
 }
 
+// 商品一覧の「履歴」は、選択した商品の仕入・売上だけを表示する。
+// 全商品の履歴をそのまま表示すると、選択した商品と無関係な履歴まで混ざってしまう。
+const historyStateMarker = `  const [historyProductId, setHistoryProductId] = useState("");`;
+const historyStateReplacement = `${historyStateMarker}
+
+  const historyPurchases = useMemo(
+    () => historyProductId
+      ? purchases.filter((purchase) => purchase.product_id === historyProductId)
+      : [],
+    [historyProductId, purchases]
+  );
+
+  const historySales = useMemo(
+    () => historyProductId
+      ? sales.filter((sale) => sale.product_id === historyProductId)
+      : [],
+    [historyProductId, sales]
+  );`;
+
+if (source.includes(historyStateMarker) && !source.includes('const historyPurchases = useMemo(')) {
+  source = source.replace(historyStateMarker, historyStateReplacement);
+  changed = true;
+  console.log('Added product-specific purchase and sales history selectors.');
+}
+
+// 「履歴」を押したら、下にある履歴カードまで自動スクロールする。
+const historyScrollEffect = `
+  useEffect(() => {
+    if (!historyProductId) return;
+
+    const timer = window.setTimeout(() => {
+      document.getElementById("product-history-panel")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    }, 50);
+
+    return () => window.clearTimeout(timer);
+  }, [historyProductId]);
+`;
+
+if (!source.includes('document.getElementById("product-history-panel")')) {
+  const insertBefore = `  const [editingProductId, setEditingProductId] =`;
+  if (source.includes(insertBefore)) {
+    source = source.replace(insertBefore, historyScrollEffect + `\n` + insertBefore);
+    changed = true;
+    console.log('Added auto-scroll to product history panel.');
+  }
+}
+
+// 履歴カードにスクロール先IDを付ける。
+const historySectionMarker = `{historyProductId && (\n              <section style={cardStyle}>`;
+const historySectionReplacement = `{historyProductId && (\n              <section id="product-history-panel" style={cardStyle}>`;
+if (source.includes(historySectionMarker) && !source.includes('id="product-history-panel"')) {
+  source = source.replace(historySectionMarker, historySectionReplacement);
+  changed = true;
+  console.log('Added product history panel anchor.');
+}
+
+// 選択した商品の履歴だけを描画する。
+const purchaseEmptyOld = `{purchases.length ===\n0 ? (`;
+const purchaseEmptyNew = `{historyPurchases.length === 0 ? (`;
+if (source.includes(purchaseEmptyOld)) {
+  source = source.replace(purchaseEmptyOld, purchaseEmptyNew);
+  changed = true;
+  console.log('Filtered product history empty state for purchases.');
+}
+
+const purchaseMapOld = `{purchases.map(`;
+const purchaseMapNew = `{historyPurchases.map(`;
+if (source.includes(purchaseMapOld)) {
+  source = source.replace(purchaseMapOld, purchaseMapNew);
+  changed = true;
+  console.log('Filtered product purchase history by product ID.');
+}
+
+const salesEmptyOld = `{sales.length === 0 ? (`;
+const salesEmptyNew = `{historySales.length === 0 ? (`;
+if (source.includes(salesEmptyOld)) {
+  source = source.replace(salesEmptyOld, salesEmptyNew);
+  changed = true;
+  console.log('Filtered product history empty state for sales.');
+}
+
+const salesMapOld = `{sales.map(`;
+const salesMapNew = `{historySales.map(`;
+if (source.includes(salesMapOld)) {
+  source = source.replace(salesMapOld, salesMapNew);
+  changed = true;
+  console.log('Filtered product sales history by product ID.');
+}
+
 if (changed) {
   fs.writeFileSync(file, source, 'utf8');
 } else {
