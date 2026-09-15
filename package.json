@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "prebuild": "node scripts/repair-dashboard-syntax.js",
+    "prebuild": "node scripts/repair-dashboard-syntax.js && node scripts/fix-purchase-delete.js",
     "build": "next build",
     "start": "next start"
   },
