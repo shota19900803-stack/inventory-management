@@ -28,7 +28,6 @@ const SIZE_OPTIONS: Record<string, string[]> = {
 };
 
 function fallbackAmount(carrier: string, service: string, prefecture: string, size: string): number {
-  // レターパックは全国一律600円。都道府県・サイズには依存しない。
   if (carrier === "郵便局" && service === "レターパック") return 600;
 
   const region = findRegion(prefecture, carrier);
@@ -104,7 +103,6 @@ export default function ShippingAutoCalculator() {
 
   const dbAmount = Number(dbCard?.rates[size] ?? dbCard?.rates.default ?? 0);
   const defaultAmount = fallbackAmount(carrier, service, prefecture, size);
-  // レターパックは設定DBに値があっても、指定の600円を優先する。
   const autoAmount = carrier === "郵便局" && service === "レターパック"
     ? 600
     : (dbAmount > 0 ? dbAmount : defaultAmount);
@@ -113,12 +111,10 @@ export default function ShippingAutoCalculator() {
   const applyToSaleForm = () => {
     const nextAmount = Math.max(0, Number(amount || 0));
 
-    // 新しい発送費パネルへ直接反映する。
     window.dispatchEvent(new CustomEvent("shipping-calculator-apply", {
       detail: { amount: nextAmount },
     }));
 
-    // 旧送料欄が残っている画面でも反映できるようにしておく。
     const inputs = Array.from(document.querySelectorAll("input")) as HTMLInputElement[];
     const input = inputs.find((i) => i.placeholder?.includes("750")) || inputs.find((i) => (i.parentElement?.textContent ?? "").trim().startsWith("送料"));
     if (input) {
@@ -132,29 +128,8 @@ export default function ShippingAutoCalculator() {
     setOpen(false);
   };
 
-  const buttonStyle: React.CSSProperties = {
-    position: "fixed",
-    left: "50%",
-    bottom: 280,
-    transform: "translateX(-50%)",
-    zIndex: 1100,
-    border: 0,
-    borderRadius: 999,
-    padding: "13px 22px",
-    background: "#0369a1",
-    color: "white",
-    fontWeight: 900,
-    fontSize: 15,
-    boxShadow: "0 8px 24px rgba(3,105,161,.25)",
-    cursor: "pointer",
-  };
-
   return (
     <>
-      <button type="button" onClick={() => setOpen(true)} style={buttonStyle}>
-        🚚 送料自動計算
-      </button>
-
       {open && (
         <div style={{ position: "fixed", inset: 0, zIndex: 1200, background: "rgba(15,23,42,.48)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18 }}>
           <div style={{ width: "min(560px,100%)", maxHeight: "90vh", overflowY: "auto", background: "white", borderRadius: 24, padding: 24, boxShadow: "0 24px 80px rgba(0,0,0,.25)" }}>
