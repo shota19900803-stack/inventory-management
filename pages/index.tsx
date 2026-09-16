@@ -2,6 +2,7 @@ import dynamic from "next/dynamic";
 import { Component, useEffect, useLayoutEffect } from "react";
 import { supabaseBrowser } from "../lib/supabase";
 import SalesShippingEnhancement from "../components/SalesShippingEnhancement";
+import ShippingAutoCalculator from "../components/ShippingAutoCalculator";
 import QuickActions from "../components/QuickActions";
 import ManagementSnapshot from "../components/ManagementSnapshot";
 
@@ -47,9 +48,6 @@ export default function Home() {
           return;
         }
 
-        // 商品管理の「履歴」はDashboard内の全履歴表示と混ざらないよう、
-        // 選択した商品の専用履歴ページへ直接遷移させる。
-        // React側のonClickも先に実行させ、イベントは横取りしない。
         if (text !== "履歴") return;
         if (button.getAttribute("data-history-route-bound") === "true") return;
         button.setAttribute("data-history-route-bound", "true");
@@ -77,8 +75,6 @@ export default function Home() {
         });
       });
 
-      // 商品管理の「履歴」は一覧の下にも描画されるため、クリック後に見える位置へ移動する。
-      // 直接遷移できない場合のDashboard内表示も従来どおり残す。
       const historySection = Array.from(main.querySelectorAll("section")).find((section) => {
         const heading = section.querySelector("h2");
         const text = (heading?.textContent || "").replace(/\s/g, "").trim();
@@ -114,14 +110,12 @@ export default function Home() {
     };
   }, []);
 
-  return <><SafeBoundary><Dashboard/></SafeBoundary><ManagementSnapshot/><SalesShippingEnhancement/><QuickActions/>
+  return <><SafeBoundary><Dashboard/></SafeBoundary><ManagementSnapshot/><SalesShippingEnhancement/><ShippingAutoCalculator/><QuickActions/>
     <style>{`
-      /* 月次集計の在庫管理カードは、在庫不足一覧を商品管理へ集約したため表示しない */
       main > div > section:nth-of-type(2) > div:nth-child(5) {
         display: none !important;
       }
 
-      /* 最近の売上：長い注文番号が売上金額へ食い込まないようにする */
       table:has([data-purchase-cost-header="true"]) th,
       table:has([data-purchase-cost-header="true"]) td {
         vertical-align: middle;
