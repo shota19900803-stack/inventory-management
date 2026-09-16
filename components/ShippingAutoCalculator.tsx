@@ -75,6 +75,12 @@ export default function ShippingAutoCalculator() {
     return () => { active = false; };
   }, []);
 
+  useEffect(() => {
+    const openCalculator = () => setOpen(true);
+    window.addEventListener("shipping-calculator-open", openCalculator);
+    return () => window.removeEventListener("shipping-calculator-open", openCalculator);
+  }, []);
+
   const services = useMemo(() => SERVICE_OPTIONS[carrier] ?? [], [carrier]);
   const sizes = useMemo(() => SIZE_OPTIONS[carrier] ?? [], [carrier]);
   const region = findRegion(prefecture, carrier);
