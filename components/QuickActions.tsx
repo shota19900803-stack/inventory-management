@@ -32,8 +32,6 @@ export default function QuickActions() {
   } | null>(null);
 
   useEffect(() => {
-    let disposed = false;
-
     try {
       const saved = window.localStorage.getItem(STORAGE_KEY);
       if (saved) {
@@ -50,28 +48,6 @@ export default function QuickActions() {
     } catch {
       setPosition(clampPosition(DEFAULT_POSITION.top, DEFAULT_POSITION.right));
     }
-
-    const hideLegacyShippingButton = () => {
-      if (disposed) return;
-      const buttons = Array.from(document.querySelectorAll("button"));
-      const target = buttons.find(
-        (button) =>
-          !button.closest("[data-quick-actions]") &&
-          (button.textContent || "").trim() === "🚚 送料自動計算"
-      );
-      if (target) {
-        target.setAttribute("data-legacy-shipping-button", "true");
-        target.style.display = "none";
-      }
-    };
-
-    hideLegacyShippingButton();
-    const timer = window.setInterval(hideLegacyShippingButton, 500);
-
-    return () => {
-      disposed = true;
-      window.clearInterval(timer);
-    };
   }, []);
 
   useEffect(() => {
@@ -90,13 +66,7 @@ export default function QuickActions() {
   }, []);
 
   const openShippingCalculator = () => {
-    const button = Array.from(document.querySelectorAll("button")).find(
-      (item) =>
-        !item.closest("[data-quick-actions]") &&
-        (item.textContent || "").trim() === "🚚 送料自動計算"
-    ) as HTMLButtonElement | undefined;
-
-    if (button) button.click();
+    window.dispatchEvent(new CustomEvent("shipping-calculator-open"));
   };
 
   const startDrag = (event: React.PointerEvent<HTMLDivElement>) => {
