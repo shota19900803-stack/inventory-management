@@ -56,17 +56,17 @@ function parseSettlement(text: string, filename: string, hash: string): Settleme
   // 店舗別内訳の「支払合計額」が請求控除前の支払計算額です。
   // 例：上段 支払=4,631,894 / 請求合計額=454,068 / 支払合計額=5,085,962
   // → 5,085,962 - 454,068 = 4,631,894 が実際の振込額。
-  // PDF抽出では円記号が「\\」になる場合があるため、\\ / ¥ / ￥をすべて通貨記号として扱います。
-  const summaryMatch = source.match(/請\\s*(?:-|－|—|―)\\s*支\\s*(?:[\\\\¥￥]\\s*)?([\\d]{1,3}(?:,[\\d]{3})+|\\d+)/);
+  // PDF抽出では円記号が「\」になる場合があるため、\ / ¥ / ￥をすべて通貨記号として扱います。
+  const summaryMatch = source.match(/請\s*(?:-|－|—|―)\s*支\s*(?:[\\¥￥]\s*)?([\d]{1,3}(?:,[\d]{3})+|\d+)/);
   const summaryNetTransfer = summaryMatch ? money(summaryMatch[1]) : null;
 
-  const storeArea = source.match(/店舗別内訳[\\s\\S]{0,1600}/)?.[0] || "";
-  const storeHeader = storeArea.match(/請\\s*求\\s*合\\s*計\\s*額\\s*支\\s*払\\s*合\\s*計\\s*額/);
+  const storeArea = source.match(/店舗別内訳[\s\S]{0,1600}/)?.[0] || "";
+  const storeHeader = storeArea.match(/請\s*求\s*合\s*計\s*額\s*支\s*払\s*合\s*計\s*額/);
   const storeTotalsArea = storeHeader
     ? storeArea.slice(storeHeader.index! + storeHeader[0].length)
     : "";
   const storeAmounts = storeTotalsArea
-    ? [...storeTotalsArea.matchAll(/(?:[\\\\¥￥]\\s*)([\\d]{1,3}(?:,[\\d]{3})+|\\d+)/g)]
+    ? [...storeTotalsArea.matchAll(/(?:[\\¥￥]\s*)([\d]{1,3}(?:,[\d]{3})+|\d+)/g)]
         .map((m) => money(m[1]))
         .filter((n) => Number.isFinite(n) && n > 0)
     : [];
@@ -75,18 +75,13 @@ function parseSettlement(text: string, filename: string, hash: string): Settleme
   const storeBillingAmount = storeAmounts.length >= 2 ? storeAmounts[storeAmounts.length - 2] : null;
   const storePaymentAmount = storeAmounts.length >= 2 ? storeAmounts[storeAmounts.length - 1] : null;
 
-  const labeledPayment = amountAfterLabel(source, /支\\s*払\\s*合\\s*計\\s*額/);
-  const explicitBilling = source.match(/請\\s*(?:[\\\\¥￥]\\s*)?([\\d]{1,3}(?:,[\\d]{3})+|\\d+)\\s*(?:円)?\\s*(?:支\\s*払|繰\\s*越)/);
+  const labeledPayment = amountAfterLabel(source, /支\s*払\s*合\s*計\s*額/);
+  const explicitBilling = source.match(/請\s*(?:[\\¥￥]\s*)?([\d]{1,3}(?:,[\d]{3})+|\d+)\s*(?:円)?\s*(?:支\s*払|繰\s*越)/);
 
-  let paymentAmount = storePaymentAmount ?? labeledPayment ?? summaryNetTransfer ?? 0;
-  let billingAmount = storeBillingAmount ?? (explicitBilling ? money(explicitBilling[1]) : 0);
-  let netTransfer = summaryNetTransfer ?? (paymentAmount - billingAmount);
+  const paymentAmount = storePaymentAmount ?? labeledPayment ?? summaryNetTransfer ?? 0;
+  const billingAmount = storeBillingAmount ?? (explicitBilling ? money(explicitBilling[1]) : 0);
+  const netTransfer = summaryNetTransfer ?? Math.max(0, paymentAmount - billingAmount);
 
-  // 「店舗別内訳」が取れないPDFでは、上段の支払額をそのまま振込予定額として扱います。
-  // 店舗別内訳が取れた場合は、上段の支払額を優先して実際の振込額にします。
-  if (storePaymentAmount != null && summaryNetTransfer == null) {
-    netTransfer = Math.max(0, paymentAmount - billingAmount);
-  }
   const cutoffMatch = source.match(/(\d{4}年\s*\d{1,2}月\s*\d{1,2}日)\s*締分/);
   const netTransfer = paymentAmount - billingAmount;
   if (!settlementDate && paymentAmount === 0 && billingAmount === 0) return null;
