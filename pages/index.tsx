@@ -48,6 +48,15 @@ export default function Home() {
           return;
         }
 
+        // 送料自動計算はQuick Actions側だけを表示し、古い/重複したボタンは隠す。
+        if (text === "🚚送料自動計算" && !button.closest("[data-quick-actions]")) {
+          if (button.getAttribute("data-shipping-calculator-hidden") !== "true") {
+            button.style.display = "none";
+            button.setAttribute("data-shipping-calculator-hidden", "true");
+          }
+          return;
+        }
+
         if (text !== "履歴") return;
         if (button.getAttribute("data-history-route-bound") === "true") return;
         button.setAttribute("data-history-route-bound", "true");
