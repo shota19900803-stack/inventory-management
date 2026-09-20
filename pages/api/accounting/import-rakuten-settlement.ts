@@ -62,7 +62,7 @@ function parseSettlement(text: string, filename: string, hash: string): Settleme
   const labeledPayment = amountAfterLabel(source, /支\\s*払\\s*合\\s*計\\s*額/);
   const summaryPaymentHead = source.match(/請\\s*求\\s*(?:[-－—―]\\s*)?支\\s*払/);\n  const summaryPaymentArea = summaryPaymentHead\n    ? source.slice(summaryPaymentHead.index!, Math.min(source.length, summaryPaymentHead.index! + 900)).split("店舗別内訳")[0]\n    : "";
   const summaryPaymentAmounts = summaryPaymentArea
-    ? [...summaryPaymentArea[0].matchAll(/(?:[\\\\¥￥]\\s*)?([\\d]{1,3}(?:,[\\d]{3})+|\\d+)\\s*(?:円)?/g)].map((m) => money(m[1])).filter((n) => Number.isFinite(n) && n > 0)
+    ? [...summaryPaymentArea[0].matchAll(/[\\\\¥￥]\\s*([\\d]{1,3}(?:,[\\d]{3})+|\\d+)\\s*(?:円)?/g)].map((m) => money(m[1])).filter((n) => Number.isFinite(n) && n > 0)
     : [];
   const summaryPayment = summaryPaymentAmounts[0] ?? null;
   const generalPayment = amountAfterLabel(source, /(?:^|[\\s　])支\\s*払(?:[\\s　]|$)/, 700);
