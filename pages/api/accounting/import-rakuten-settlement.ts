@@ -83,7 +83,6 @@ function parseSettlement(text: string, filename: string, hash: string): Settleme
   const netTransfer = summaryNetTransfer ?? Math.max(0, paymentAmount - billingAmount);
 
   const cutoffMatch = source.match(/(\d{4}年\s*\d{1,2}月\s*\d{1,2}日)\s*締分/);
-  const netTransfer = paymentAmount - billingAmount;
   if (!settlementDate && paymentAmount === 0 && billingAmount === 0) return null;
 
   return {
