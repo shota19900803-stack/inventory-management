@@ -57,7 +57,7 @@ function parseSettlement(text: string, filename: string, hash: string): Settleme
   // 例：上段 支払=4,631,894 / 請求合計額=454,068 / 支払合計額=5,085,962
   // → 5,085,962 - 454,068 = 4,631,894 が実際の振込額。
   // PDF抽出では円記号が「\」になる場合があるため、\ / ¥ / ￥をすべて通貨記号として扱います。
-  const summaryMatch = source.match(/請\s*(?:-|－|—|―)\s*支\s*(?:[\\¥￥]\s*)?([\d]{1,3}(?:,[\d]{3})+|\d+)/);
+  const summaryMatch = source.match(/請\s*求\s*(?:-|－|—|―)\s*支\s*(?:[\\¥￥]\s*)?([\d]{1,3}(?:,[\d]{3})+|\d+)/);
   const summaryNetTransfer = summaryMatch ? money(summaryMatch[1]) : null;
 
   const storeArea = source.match(/店舗別内訳[\s\S]{0,1600}/)?.[0] || "";
@@ -76,7 +76,7 @@ function parseSettlement(text: string, filename: string, hash: string): Settleme
   const storePaymentAmount = storeAmounts.length >= 2 ? storeAmounts[storeAmounts.length - 1] : null;
 
   const labeledPayment = amountAfterLabel(source, /支\s*払\s*合\s*計\s*額/);
-  const explicitBilling = source.match(/請\s*(?:[\\¥￥]\s*)?([\d]{1,3}(?:,[\d]{3})+|\d+)\s*(?:円)?\s*(?:支\s*払|繰\s*越)/);
+  const explicitBilling = source.match(/請\s*求\s*(?:[\\¥￥]\s*)?([\d]{1,3}(?:,[\d]{3})+|\d+)\s*(?:円)?\s*(?:支\s*払|繰\s*越)/);
 
   const paymentAmount = storePaymentAmount ?? labeledPayment ?? summaryNetTransfer ?? 0;
   const billingAmount = storeBillingAmount ?? (explicitBilling ? money(explicitBilling[1]) : 0);
