@@ -52,35 +52,58 @@ function parseSettlement(text: string, filename: string, hash: string): Settleme
   const period = source.match(/(\d{4}年\s*\d{1,2}月\s*\d{1,2}日)\s*[～~〜\-–]\s*(\d{4}年\s*\d{1,2}月\s*\d{1,2}日)\s*決\s*済\s*確\s*定\s*分/);
   const paymentPeriodStart = jpDate(period?.[1]); const paymentPeriodEnd = jpDate(period?.[2]);
 
-  // 楽天の総合精算書は、上段の「支払」が実際の振込予定額、
-  // 店舗別内訳の「支払合計額」が請求控除前の支払計算額です。
-  // 例：上段 支払=4,631,894 / 請求合計額=454,068 / 支払合計額=5,085,962
-  // → 5,085,962 - 454,068 = 4,631,894 が実際の振込額。
-  // PDF抽出では円記号が「\」になる場合があるため、\ / ¥ / ￥をすべて通貨記号として扱います。
-  const summaryMatch = source.match(/請\s*求\s*(?:-|－|—|―)\s*支\s*払\s*(?:[\\¥￥]\s*)?([\d]{1,3}(?:,[\d]{3})+|\d+)/);
-  const summaryNetTransfer = summaryMatch ? money(summaryMatch[1]) : null;
+  // 楽天「総合精算書」の実際のPDF抽出順に合わせて取得します。
+  // 上段：
+  //   請 求 支 払 繰 越
+  //   \4,631,894
+  //  → ここが実際の振込予定額。
+  //
+  // 精算日の後ろ：
+  //   店舗名 \454,068 \5,085,962
+  //  → 1つ目が「請求合計額」、2つ目が「支払合計額」。
+  //
+  // 15日入金など請求がないPDFでは、
+  //   店舗名 - \3,774,746
+  //  → 請求額0円、支払合計額3,774,746円。
+  const currencyAmounts = (textArea: string) =>
+    [...textArea.matchAll(/(?:[\\¥￥]\s*)([\d]{1,3}(?:,[\d]{3})+|\d+)/g)]
+      .map((m) => money(m[1]))
+      .filter((n) => Number.isFinite(n) && n >= 0);
 
-  const storeArea = source.match(/店舗別内訳[\s\S]{0,1600}/)?.[0] || "";
-  const storeHeader = storeArea.match(/請\s*求\s*合\s*計\s*額\s*支\s*払\s*合\s*計\s*額/);
-  const storeTotalsArea = storeHeader
-    ? storeArea.slice(storeHeader.index! + storeHeader[0].length)
-    : "";
-  const storeAmounts = storeTotalsArea
-    ? [...storeTotalsArea.matchAll(/(?:[\\¥￥]\s*)([\d]{1,3}(?:,[\d]{3})+|\d+)/g)]
-        .map((m) => money(m[1]))
-        .filter((n) => Number.isFinite(n) && n > 0)
-    : [];
+  const summaryArea =
+    source.match(/請\s*求\s*支\s*払\s*繰\s*越[\s\S]{0,500}/)?.[0] || "";
+  const summaryAmounts = currencyAmounts(summaryArea);
+  const summaryNetTransfer = summaryAmounts[0] ?? null;
 
-  // 複数店舗の場合も最後の2つが「合計」行の請求合計額・支払合計額になります。
-  const storeBillingAmount = storeAmounts.length >= 2 ? storeAmounts[storeAmounts.length - 2] : null;
-  const storePaymentAmount = storeAmounts.length >= 2 ? storeAmounts[storeAmounts.length - 1] : null;
+  const settlementArea =
+    source.match(/精\s*算\s*日\s*[:：]?\s*\d{4}年\s*\d{1,2}月\s*\d{1,2}日[\s\S]{0,700}/)?.[0] || "";
+  const settlementAmounts = currencyAmounts(settlementArea);
 
-  const labeledPayment = amountAfterLabel(source, /支\s*払\s*合\s*計\s*額/);
-  const explicitBilling = source.match(/請\s*求\s*(?:[\\¥￥]\s*)?([\d]{1,3}(?:,[\d]{3})+|\d+)\s*(?:円)?\s*(?:支\s*払|繰\s*越)/);
+  let paymentAmount = 0;
+  let billingAmount = 0;
 
-  const paymentAmount = storePaymentAmount ?? labeledPayment ?? summaryNetTransfer ?? 0;
-  const billingAmount = storeBillingAmount ?? (explicitBilling ? money(explicitBilling[1]) : 0);
-  const netTransfer = summaryNetTransfer ?? Math.max(0, paymentAmount - billingAmount);
+  if (settlementAmounts.length >= 2) {
+    // 月末等：請求合計額 → 支払合計額
+    billingAmount = settlementAmounts[settlementAmounts.length - 2];
+    paymentAmount = settlementAmounts[settlementAmounts.length - 1];
+  } else if (settlementAmounts.length === 1) {
+    // 15日等：請求なし、支払額だけ
+    billingAmount = 0;
+    paymentAmount = settlementAmounts[0];
+  }
+
+  // 精算日周辺から取得できないPDFへのフォールバック。
+  if (paymentAmount === 0) {
+    const labeledPayment = amountAfterLabel(source, /支\s*払\s*合\s*計\s*額/);
+    paymentAmount = labeledPayment ?? summaryNetTransfer ?? 0;
+  }
+
+  // 実際の振込額は総合精算書上段の「支払」金額を最優先。
+  // 上段が取れない場合だけ、支払合計額－請求合計額で算出。
+  const netTransfer =
+    summaryNetTransfer != null
+      ? summaryNetTransfer
+      : Math.max(0, paymentAmount - billingAmount);
 
   const cutoffMatch = source.match(/(\d{4}年\s*\d{1,2}月\s*\d{1,2}日)\s*締分/);
   if (!settlementDate && paymentAmount === 0 && billingAmount === 0) return null;
