@@ -57,10 +57,15 @@ function parseSettlement(text: string, filename: string, hash: string): Settleme
   const summary = source.match(/請\s*求\s*(?:-|－|—|―)\s*支\s*払\s*(?:[\\¥￥]\s*)?([\d,]+)(?:\s*円)?/);
   const summaryWithBilling = source.match(/請\s*(?:[\\¥￥]\s*)?([\d,]+)\s*(?:円)?\s*支\s*払\s*(?:[\\¥￥]\s*)?([\d,]+)/);
 
-  const labeledPayment = amountAfterLabel(source, /支\s*払\s*合\s*計\s*額/);
-  const generalPayment = amountAfterLabel(source, /(?:^|[\s　])支\s*払(?:[\s　]|$)/, 700);
-  const storePaymentMatch = source.match(/楽天市場店\s*[-－]\s*(?:[\\¥￥]\s*)?([\d,]+)|店舗別内訳書No[^\d]{0,120}(?:[\\¥￥]\s*)?([\d,]+)/);
-  const storePayment = storePaymentMatch ? money(storePaymentMatch[1] || storePaymentMatch[2]) : null;
+  // PDFによっては「請求 支払 繰越」という見出しと、金額が別々のテキストブロックとして抽出されます。
+  // その場合、単純に「支払」の後ろにある最後の金額を取ると、店舗別内訳の請求額を拾ってしまいます。
+  const labeledPayment = amountAfterLabel(source, /支\\s*払\\s*合\\s*計\\s*額/);
+  const summaryPaymentArea = source.match(/支\\s*払(?:(?!店舗別内訳).){0,700}/);
+  const summaryPaymentAmounts = summaryPaymentArea
+    ? [...summaryPaymentArea[0].matchAll(/(?:[\\\\¥￥]\\s*)?([\\d]{1,3}(?:,[\\d]{3})+|\\d+)\\s*(?:円)?/g)].map((m) => money(m[1])).filter((n) => Number.isFinite(n) && n > 0)
+    : [];
+  const summaryPayment = summaryPaymentAmounts[0] ?? null;
+  const generalPayment = amountAfterLabel(source, /(?:^|[\\s　])支\\s*払(?:[\\s　]|$)/, 700);
 
   let paymentAmount = 0;
   let billingAmount = 0;
@@ -69,11 +74,20 @@ function parseSettlement(text: string, filename: string, hash: string): Settleme
   } else if (summaryWithBilling) {
     billingAmount = money(summaryWithBilling[1]);
     paymentAmount = money(summaryWithBilling[2]);
+  } else if (summaryPayment != null) {
+    // 総合精算書の「支払」直後の金額が実際の振込予定額です。
+    paymentAmount = summaryPayment;
   } else {
-    paymentAmount = labeledPayment ?? storePayment ?? generalPayment ?? 0;
-    // 表のテキスト抽出では「請求合計額」の後に支払額が並ぶことがあるため、
-    // 請求額の一般抽出はここでは使わず、請求が明示されたサマリーを優先します。
-    const billingExplicit = source.match(/請\s*求\s*(?:[\\¥￥]\s*)?([\d,]+)\s*(?:円)?\s*(?:支\s*払|繰\s*越)/);
+    paymentAmount = labeledPayment ?? generalPayment ?? 0;
+    // 店舗別内訳しか抽出できないPDFでは、支払合計額を取得して請求合計額を差し引きます。
+    const storeArea = source.match(/店舗別内訳[\\s\\S]{0,1200}/)?.[0] || "";
+    const storeAmounts = [...storeArea.matchAll(/(?:[\\\\¥￥]\\s*)?([\\d]{1,3}(?:,[\\d]{3})+|\\d+)\\s*(?:円)?/g)]
+      .map((m) => money(m[1])).filter((n) => Number.isFinite(n) && n > 0);
+    if (storeAmounts.length >= 2) {
+      billingAmount = storeAmounts[storeAmounts.length - 2];
+      paymentAmount = storeAmounts[storeAmounts.length - 1];
+    }
+    const billingExplicit = source.match(/請\\s*求\\s*(?:[\\\\¥￥]\\s*)?([\\d,]+)\\s*(?:円)?\\s*(?:支\\s*払|繰\\s*越)/);
     if (billingExplicit) billingAmount = money(billingExplicit[1]);
   }
 
