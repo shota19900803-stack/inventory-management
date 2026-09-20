@@ -60,7 +60,7 @@ function parseSettlement(text: string, filename: string, hash: string): Settleme
   // PDFによっては「請求 支払 繰越」という見出しと、金額が別々のテキストブロックとして抽出されます。
   // その場合、単純に「支払」の後ろにある最後の金額を取ると、店舗別内訳の請求額を拾ってしまいます。
   const labeledPayment = amountAfterLabel(source, /支\\s*払\\s*合\\s*計\\s*額/);
-  const summaryPaymentArea = source.match(/請\\s*求\\s*(?:[-－—―]\\s*)?支\\s*払(?:(?!店舗別内訳).){0,700}/);
+  const summaryPaymentHead = source.match(/請\\s*求\\s*(?:[-－—―]\\s*)?支\\s*払/);\n  const summaryPaymentArea = summaryPaymentHead\n    ? source.slice(summaryPaymentHead.index!, Math.min(source.length, summaryPaymentHead.index! + 900)).split("店舗別内訳")[0]\n    : "";
   const summaryPaymentAmounts = summaryPaymentArea
     ? [...summaryPaymentArea[0].matchAll(/(?:[\\\\¥￥]\\s*)?([\\d]{1,3}(?:,[\\d]{3})+|\\d+)\\s*(?:円)?/g)].map((m) => money(m[1])).filter((n) => Number.isFinite(n) && n > 0)
     : [];
