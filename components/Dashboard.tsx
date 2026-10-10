@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { BrowserMultiFormatReader } from "@zxing/browser";
 import { supabaseBrowser } from "../lib/supabase";
-import ProductPriceResearchPanel from "./ProductPriceResearchPanel";
 
 type Product = {
   id: string;
@@ -2074,7 +2073,6 @@ async function cancelSale(sale: any) {
 
         {tab === "products" && (
           <>
-            <ProductPriceResearchPanel products={products} visible={tab === "products"} />
             <section style={cardStyle}>
               <h2>
                 {editingProductId
