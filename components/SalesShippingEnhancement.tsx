@@ -102,7 +102,7 @@ type Props = { target: HTMLElement };
 function SalesShippingPanel({ target }: Props) {
   const [cards, setCards] = useState<ShippingRateCard[]>([]);
   const [prefecture, setPrefecture] = useState("岡山県");
-  const [carrier, setCarrier] = useState("クロネコヤマト");
+  const [carrier, setCarrier] = useState("佐川急便");
   const [service, setService] = useState("宅急便コンパクト");
   const [size, setSize] = useState("60");
   const [manualAmount, setManualAmount] = useState("");
