@@ -2832,7 +2832,8 @@ async function cancelSale(sale: any) {
                     仕入単価*
                     <input
                       style={inputStyle}
-                      type="number"
+                      type="text"
+                      inputMode="numeric"
                       value={
                         purchaseForm.unit_cost
                       }
@@ -2850,7 +2851,8 @@ async function cancelSale(sale: any) {
                     数量*
                     <input
                       style={inputStyle}
-                      type="number"
+                      type="text"
+                      inputMode="numeric"
                       min="1"
                       value={
                         purchaseForm.quantity
@@ -3141,7 +3143,8 @@ async function cancelSale(sale: any) {
                     販売単価*
                     <input
                       style={inputStyle}
-                      type="number"
+                      type="text"
+                      inputMode="numeric"
                       value={
                         saleForm.unit_price
                       }
@@ -3177,7 +3180,8 @@ async function cancelSale(sale: any) {
                     数量*
                     <input
                       style={inputStyle}
-                      type="number"
+                      type="text"
+                      inputMode="numeric"
                       min="1"
                       value={
                         saleForm.quantity
