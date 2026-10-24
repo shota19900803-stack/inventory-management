@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/router";
 import { BrowserMultiFormatReader } from "@zxing/browser";
 import { supabaseBrowser } from "../lib/supabase";
+import { PREFECTURES, CARRIERS, findRegion, type ShippingRateCard, SAGAWA, YUPACK, NEKOPOS, COMPACT, SAGAWA_SIZES, YUPACK_SIZES, YAMATO_SERVICES } from "../lib/shippingRates";
 
 type Product = { id: string; name: string; jan_code?: string | null; sku?: string | null; stock_quantity?: number | null; selling_price?: number | null; cost_price?: number | null };
 type Purchase = { id: string; product_id: string; purchase_date: string; supplier?: string | null; unit_cost: number; quantity: number };
@@ -20,6 +21,11 @@ export default function SalesOrderPage() {
   const [channel, setChannel] = useState("楽天市場");
   const [orderNumber, setOrderNumber] = useState("");
   const [shippingCost, setShippingCost] = useState("0");
+  const [shippingPrefecture, setShippingPrefecture] = useState("岡山県");
+  const [shippingCarrier, setShippingCarrier] = useState<string>("佐川急便");
+  const [shippingService, setShippingService] = useState("飛脚宅配便");
+  const [shippingSize, setShippingSize] = useState("60");
+  const [shippingRateCards, setShippingRateCards] = useState<ShippingRateCard[]>([]);
   const [notes, setNotes] = useState("");
   const [lines, setLines] = useState<SaleLine[]>([newLine()]);
   const [saving, setSaving] = useState(false);
@@ -47,7 +53,7 @@ export default function SalesOrderPage() {
     const cost = lines.reduce((sum, line) => sum + Number(line.unit_cost || 0) * Number(line.quantity || 0), 0);
     const shipping = Number(shippingCost || 0);
     return { sales, cost, shipping, gross: sales - cost - shipping };
-  }, [lines, shippingCost]);
+  }, [lines, calculatedShippingCost]);
 
   function updateLine(id: string, patch: Partial<SaleLine>) { setLines((prev) => prev.map((line) => line.id === id ? { ...line, ...patch } : line)); }
   function setLineSearch(lineId: string, value: string) { setLineSearches((prev) => ({ ...prev, [lineId]: value })); }
@@ -104,11 +110,11 @@ export default function SalesOrderPage() {
     if (stockProblems.length) return setMessage(stockProblems.map(({ item, product }) => `${product?.name || "商品"}：在庫 ${Number(product?.stock_quantity || 0)}個 / 売上 ${item.quantity}個`).join("\n") + "\n在庫不足のため登録できません。");
     setSaving(true);
     try {
-      const { data, error } = await supabase.rpc("register_sales_order", { p_sale_date: saleDate, p_sales_channel: channel.trim() || null, p_order_number: orderNumber.trim(), p_shipping_cost: Number(shippingCost || 0), p_notes: notes.trim() || null, p_items: items });
+      const { data, error } = await supabase.rpc("register_sales_order", { p_sale_date: saleDate, p_sales_channel: channel.trim() || null, p_order_number: orderNumber.trim(), p_shipping_cost: calculatedShippingCost, p_notes: notes.trim() || null, p_items: items });
       if (error) throw error;
       if (!data?.success) throw new Error(data?.message || "注文登録に失敗しました。");
       setMessage(`注文を登録しました。${data.sale_count}明細・売上${yen(data.total_sales)}・粗利${yen(data.gross_profit)}`);
-      setLines([newLine()]); setLineSearches({}); setOrderNumber(""); setShippingCost("0"); setNotes("");
+      setLines([newLine()]); setLineSearches({}); setOrderNumber(""); setShippingCost(String(calculatedShippingCost)); setNotes("");
     } catch (error: any) { setMessage(`注文登録エラー：${error?.message || String(error)}`); }
     finally { setSaving(false); }
   }
@@ -127,7 +133,20 @@ export default function SalesOrderPage() {
             <label>注文番号*<input autoFocus value={orderNumber} onChange={(e) => setOrderNumber(e.target.value)} placeholder="例：RKT-12345" style={inputStyle} /></label>
             <label>販売先<input value={channel} onChange={(e) => setChannel(e.target.value)} style={inputStyle} /></label>
             <label>売上日<input type="date" value={saleDate} onChange={(e) => setSaleDate(e.target.value)} style={inputStyle} /></label>
-            <label>送料<input type="number" min="0" value={shippingCost} onChange={(e) => setShippingCost(e.target.value)} style={inputStyle} /></label>
+            <div style={{ gridColumn: "1 / -1", padding: 16, borderRadius: 12, background: "#f0f9ff", border: "1px solid #bae6fd" }}>
+              <h3 style={{ margin: "0 0 6px", color: "#0369a1" }}>🚚 発送費（自動計算）</h3>
+              <p style={{ margin: "0 0 12px", color: "#64748b", fontSize: 13 }}>配送先・配送会社・配送方法・サイズを選ぶと送料を自動計算します。</p>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+                <label>配送先都道府県<select value={shippingPrefecture} onChange={(e) => setShippingPrefecture(e.target.value)} style={inputStyle}>{PREFECTURES.map((pref) => <option key={pref} value={pref}>{pref}</option>)}</select></label>
+                <label>配送会社<select value={shippingCarrier} onChange={(e) => setShippingCarrier(e.target.value)} style={inputStyle}>{CARRIERS.map((carrier) => <option key={carrier} value={carrier}>{carrier}</option>)}</select></label>
+                <label>配送方法<select value={shippingService} onChange={(e) => setShippingService(e.target.value)} style={inputStyle}>{shippingServices.map((service) => <option key={service} value={service}>{service}</option>)}</select></label>
+                {shippingSizes.length > 0 && <label>サイズ<select value={shippingSize} onChange={(e) => setShippingSize(e.target.value)} style={inputStyle}>{shippingSizes.map((size) => <option key={size} value={size}>{size}サイズ</option>)}</select></label>}
+              </div>
+              <div style={{ marginTop: 14, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                <span style={{ color: "#64748b", fontSize: 13 }}>選択内容に基づく送料</span>
+                <strong style={{ fontSize: 26, color: "#0369a1" }}>¥{Number(calculatedShippingCost || 0).toLocaleString()}</strong>
+              </div>
+            </div>
           </div></section>
 
           <section style={cardStyle}>
