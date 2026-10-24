@@ -20,7 +20,6 @@ export default function SalesOrderPage() {
   const [saleDate, setSaleDate] = useState(today);
   const [channel, setChannel] = useState("楽天市場");
   const [orderNumber, setOrderNumber] = useState("");
-  const [shippingCost, setShippingCost] = useState("0");
   const [shippingPrefecture, setShippingPrefecture] = useState("岡山県");
   const [shippingCarrier, setShippingCarrier] = useState<string>("佐川急便");
   const [shippingService, setShippingService] = useState("飛脚宅配便");
@@ -48,10 +47,62 @@ export default function SalesOrderPage() {
   }, []);
 
   const productMap = useMemo(() => Object.fromEntries(products.map((p) => [p.id, p])), [products]);
+
+  useEffect(() => {
+    supabase.from("shipping_rate_cards").select("*").eq("active", true).order("sort_order")
+      .then(({ data }) => setShippingRateCards((data ?? []) as ShippingRateCard[]));
+  }, []);
+
+  const shippingServices = useMemo(() => {
+    if (shippingCarrier === "佐川急便") return ["飛脚宅配便"];
+    if (shippingCarrier === "郵便局") return ["ゆうパック", "レターパック"];
+    if (shippingCarrier === "クロネコヤマト") return [...YAMATO_SERVICES];
+    return [];
+  }, [shippingCarrier]);
+  const shippingSizes = useMemo(() => {
+    if (shippingCarrier === "佐川急便") return SAGAWA_SIZES;
+    if (shippingCarrier === "郵便局") return YUPACK_SIZES;
+    return [];
+  }, [shippingCarrier]);
+  const shippingRegion = findRegion(shippingPrefecture, shippingCarrier);
+  const shippingRateCard = useMemo(
+    () => shippingRateCards.find((card) => card.carrier === shippingCarrier && card.service === shippingService && card.region === shippingRegion) ?? null,
+    [shippingRateCards, shippingCarrier, shippingService, shippingRegion]
+  );
+  const shippingDbAmount = Number(shippingRateCard?.rates[shippingSize] ?? shippingRateCard?.rates.default ?? 0);
+  const shippingFallbackAmount = (() => {
+    if (shippingCarrier === "郵便局" && shippingService === "レターパック") return 600;
+    if (!shippingRegion) return 0;
+    if (shippingCarrier === "佐川急便") {
+      const index = SAGAWA_SIZES.indexOf(shippingSize);
+      return index >= 0 ? Number(SAGAWA[shippingRegion]?.[index] ?? 0) : 0;
+    }
+    if (shippingCarrier === "郵便局") {
+      const index = YUPACK_SIZES.indexOf(shippingSize);
+      return index >= 0 ? Number(YUPACK[shippingRegion]?.[index] ?? 0) : 0;
+    }
+    if (shippingCarrier === "クロネコヤマト") {
+      if (shippingService === "ネコポス") return Number(NEKOPOS[shippingRegion] ?? 0);
+      if (shippingService === "宅急便コンパクト") return Number(COMPACT[shippingRegion] ?? 0);
+    }
+    return 0;
+  })();
+  const calculatedShippingCost = shippingCarrier === "郵便局" && shippingService === "レターパック"
+    ? 600
+    : (shippingDbAmount > 0 ? shippingDbAmount : shippingFallbackAmount);
+
+  useEffect(() => {
+    if (!shippingServices.includes(shippingService)) setShippingService(shippingServices[0] ?? "");
+  }, [shippingServices, shippingService]);
+  useEffect(() => {
+    if (shippingSizes.length && !shippingSizes.includes(shippingSize)) setShippingSize(shippingSizes[0]);
+    if (!shippingSizes.length) setShippingSize("");
+  }, [shippingSizes, shippingSize]);
+
   const totals = useMemo(() => {
     const sales = lines.reduce((sum, line) => sum + Number(line.unit_price || 0) * Number(line.quantity || 0), 0);
     const cost = lines.reduce((sum, line) => sum + Number(line.unit_cost || 0) * Number(line.quantity || 0), 0);
-    const shipping = Number(shippingCost || 0);
+    const shipping = calculatedShippingCost;
     return { sales, cost, shipping, gross: sales - cost - shipping };
   }, [lines, calculatedShippingCost]);
 
@@ -114,7 +165,7 @@ export default function SalesOrderPage() {
       if (error) throw error;
       if (!data?.success) throw new Error(data?.message || "注文登録に失敗しました。");
       setMessage(`注文を登録しました。${data.sale_count}明細・売上${yen(data.total_sales)}・粗利${yen(data.gross_profit)}`);
-      setLines([newLine()]); setLineSearches({}); setOrderNumber(""); setShippingCost(String(calculatedShippingCost)); setNotes("");
+      setLines([newLine()]); setLineSearches({}); setOrderNumber(""); setNotes("");
     } catch (error: any) { setMessage(`注文登録エラー：${error?.message || String(error)}`); }
     finally { setSaving(false); }
   }
