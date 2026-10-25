@@ -1310,6 +1310,8 @@ function editSale(sale: Sale) {
   if (sale.is_cancelled) { setMessage("取消済みの売上は編集できません。"); return; }
   setEditingSaleId(sale.id);
   setSaleForm({ product_id: sale.product_id, sale_date: sale.sale_date, sales_channel: sale.sales_channel ?? "楽天市場", order_number: sale.order_number ?? "", unit_price: String(sale.unit_price ?? ""), unit_cost: String(sale.unit_cost ?? ""), quantity: String(sale.quantity ?? 1), shipping_cost: String(sale.shipping_cost ?? ""), notes: sale.notes ?? "" });
+  // 発送費パネル側にも保存済み送料を読み込む。編集時に自動計算額で上書きされるのを防ぐ。
+  window.setTimeout(() => window.dispatchEvent(new CustomEvent("shipping-calculator-apply", { detail: { amount: Number(sale.shipping_cost ?? 0) } })), 0);
   setTab("sales");
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
@@ -1321,7 +1323,11 @@ async function updateSale(event: React.FormEvent) {
   const original = sales.find((item) => item.id === editingSaleId);
   if (!original) { setMessage("編集対象の売上が見つかりません。"); return; }
   if (original.product_id !== saleForm.product_id) { setMessage("売上商品の変更は安全のためできません。取消して新しく登録してください。"); return; }
-  const unitPrice = Number(saleForm.unit_price || 0), unitCost = Number(saleForm.unit_cost || 0), quantity = Number(saleForm.quantity || 0), shippingCost = Number(saleForm.shipping_cost || 0);
+  const unitPrice = Number(saleForm.unit_price || 0), unitCost = Number(saleForm.unit_cost || 0), quantity = Number(saleForm.quantity || 0);
+  // 発送費パネルで変更された送料を優先して保存する（従来の隠し入力欄の古い値を使わない）。
+  const shippingPanel = typeof document !== "undefined" ? document.querySelector("[data-sales-shipping-panel]") as HTMLElement | null : null;
+  const panelShippingCost = shippingPanel?.getAttribute("data-shipping-cost");
+  const shippingCost = panelShippingCost != null && panelShippingCost !== "" ? Number(panelShippingCost) : Number(saleForm.shipping_cost || 0);
   if (unitPrice < 0 || unitCost < 0 || shippingCost < 0 || quantity <= 0) { setMessage("販売価格・原価・数量を正しく入力してください。"); return; }
   setSaving(true); setMessage("");
   try {
