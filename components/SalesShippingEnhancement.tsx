@@ -178,12 +178,13 @@ function SalesShippingPanel({ target }: Props) {
 
     const captureSnapshot = () => {
       const productSelect = Array.from(form.querySelectorAll("select")).find((el) => Array.from(el.options).some((o) => (o.textContent || "").trim() === "商品を選択")) as HTMLSelectElement | undefined;
-      const numbers = Array.from(form.querySelectorAll('input[type="number"]')) as HTMLInputElement[];
+      // 入力欄のtype属性や表示順に依存せず、ラベル名から価格・数量を取得する。
+      // 数量欄がtype="text"になっていても、送料同期の対象売上を正しく特定できる。
       const snapshot: SaleSnapshot = {
         productId: productSelect?.value || "",
         date: (form.querySelector('input[type="date"]') as HTMLInputElement | null)?.value || "",
-        price: Number(numbers[0]?.value || 0),
-        quantity: Number(numbers[2]?.value || 1),
+        price: Number(readInput("販売単価") || 0),
+        quantity: Number(readInput("数量") || 1),
         order: readInput("注文番号"),
       };
       snapshotRef.current = snapshot;
