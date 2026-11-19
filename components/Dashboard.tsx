@@ -950,9 +950,11 @@ async function deletePurchase(purchase: Purchase) {
     if (currentStock < Number(purchase.quantity)) throw new Error(`現在庫が${purchase.quantity}個未満のため削除できません。先に関連する売上を確認してください。`);
     const { error: de } = await supabase.from("purchase_history").delete().eq("id", purchase.id);
     if (de) throw de;
-    const { error: se } = await supabase.from("products").update({ stock_quantity: currentStock - Number(purchase.quantity) }).eq("id", purchase.product_id);
+    const { data: latestPurchase, error: latestError } = await supabase.from("purchase_history").select("unit_cost").eq("product_id", purchase.product_id).order("purchase_date", { ascending: false }).order("created_at", { ascending: false }).limit(1).maybeSingle();
+    if (latestError) throw latestError;
+    const { error: se } = await supabase.from("products").update({ stock_quantity: currentStock - Number(purchase.quantity), ...(latestPurchase ? { cost_price: Number(latestPurchase.unit_cost) } : {}) }).eq("id", purchase.product_id);
     if (se) throw se;
-    setMessage("仕入を削除し、在庫も調整しました。");
+    setMessage("仕入を削除し、在庫と最新仕入単価を更新しました。");
     await loadAll();
   } catch (error: any) { setMessage(`仕入削除エラー：${error?.message || String(error)}`); }
   finally { setSaving(false); }
@@ -998,9 +1000,11 @@ async function savePurchase(
       if (currentStock + delta < 0) throw new Error("数量を減らすと在庫がマイナスになるため更新できません。");
       const { error: ue } = await supabase.from("purchase_history").update({ purchase_date: purchaseForm.purchase_date, supplier: purchaseForm.supplier.trim() || null, unit_cost: unitCost, quantity, total_cost: unitCost * quantity, notes: purchaseForm.notes.trim() || null }).eq("id", editingPurchaseId);
       if (ue) throw ue;
-      const { error: se } = await supabase.from("products").update({ stock_quantity: currentStock + delta }).eq("id", original.product_id);
+      const { data: latestPurchase, error: latestError } = await supabase.from("purchase_history").select("unit_cost").eq("product_id", original.product_id).order("purchase_date", { ascending: false }).order("created_at", { ascending: false }).limit(1).maybeSingle();
+      if (latestError) throw latestError;
+      const { error: se } = await supabase.from("products").update({ stock_quantity: currentStock + delta, ...(latestPurchase ? { cost_price: Number(latestPurchase.unit_cost) } : {}) }).eq("id", original.product_id);
       if (se) throw se;
-      setMessage("仕入を更新し、在庫も調整しました。");
+      setMessage("仕入を更新し、在庫と最新仕入単価を更新しました。");
       setEditingPurchaseId(null); setPurchaseForm(initialPurchaseForm); await loadAll(); return;
     }
 
